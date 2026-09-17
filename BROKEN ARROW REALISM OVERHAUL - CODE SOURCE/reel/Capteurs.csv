@@ -1,0 +1,68 @@
+# Broken Arrow Realism Overhaul - vraies stats : détection des capteurs, valable pour les deux camps. Lignes sans option : détection aérienne des défenses antiaériennes (radars) et des équipes sol-air. Lignes 8/27/36 = batteries SAM longue portée (radars réels bien au-delà de 9 km). Lignes 7/18 = DCA courte portée et canons DCA : hélicoptères (basse altitude) à 6 km, avions (haute altitude) à 6 km. Lignes 41/42 = équipes sol-air (Stinger, Igla, Verba, Piorun, Grom, RBS 70) : optique anti-aérienne 5 km ; la ligne 43 est partagée avec des forces spéciales, elle est traitée par unité dans CapteursParUnite.csv. Les optiques des hélicoptères et les exceptions par unité sont dans CapteursParUnite.csv. Fichier généré.
+Option;Id;Name;OpticsGround;OpticsLowAltitude;OpticsHighAltitude
+;30;Optics SHORAD +Med ND Model;;9000;9000
+;8;Optics SAM HA + Bad;;9000;9000
+;27;Optics SAM HA + Med [Optics];;9000;9000
+;36;Optics SAM HA + Bad ND;;9000;9000
+;18;Optics SHORAD +Med ;;6000;6000
+;7;Optics SHORAD +Bad;;6000;6000
+;41;Medium Plus Optics Manpad;;5000;5000
+;42;Medium Plus Optics Manpad;;5000;5000
+# OPTION_CAPTEURS_SOL_REELS : distance de reconnaissance d'un véhicule à découvert par temps clair avec le meilleur appareil de l'unité (valeur par défaut de chaque ligne ; exceptions par unité dans CapteursParUnite.csv). Oeil nu et jumelles, fantassins, camions et véhicules sans caméra thermique 2 km ; équipages à pied 1 km ; thermique de 1re génération 2,5 km ; Sosna-U et viseurs équivalents 3,2 km ; ATTICA / Abrams SEP v3 5 km ; éclaireurs à pied 3 km ; tireurs d'élite 4 km ; radars de reconnaissance 6 km ; LRAS3 et viseurs d'hélicoptères d'attaque 8 km ; drones tactiques 3,5 km, drones MALE 7-8 km, RQ-4 9 km ; navires 5 km ; AC-130 6 km. Identique pour les deux camps. Fichier généré.
+OPTION_CAPTEURS_SOL_REELS;1;Good Optics;3000;;
+OPTION_CAPTEURS_SOL_REELS;2;Medium Optics;2000;;
+OPTION_CAPTEURS_SOL_REELS;3;Very Good Optics;4000;;
+OPTION_CAPTEURS_SOL_REELS;4;Bad Optics;2000;;
+OPTION_CAPTEURS_SOL_REELS;5;Exceptional Optics;8000;;
+OPTION_CAPTEURS_SOL_REELS;7;Optics SHORAD +Bad;3000;;
+OPTION_CAPTEURS_SOL_REELS;8;Optics SAM HA + Bad;2000;;
+OPTION_CAPTEURS_SOL_REELS;10;Optics Arleigh Solo;5000;;
+OPTION_CAPTEURS_SOL_REELS;12;Good Optics MH6;3500;;
+OPTION_CAPTEURS_SOL_REELS;13;Good Optics NonDefault;3000;;
+OPTION_CAPTEURS_SOL_REELS;14;Very Good Optics NonDefault;6000;;
+OPTION_CAPTEURS_SOL_REELS;15;Exceptional Optics NonDefault;6000;;
+OPTION_CAPTEURS_SOL_REELS;17;Optics SHORAD +Med ND;3000;;
+OPTION_CAPTEURS_SOL_REELS;18;Optics SHORAD +Med ;3000;;
+OPTION_CAPTEURS_SOL_REELS;19;Optics SHORAD +Bad ND;2500;;
+OPTION_CAPTEURS_SOL_REELS;20;Exceptional Optics Model Radar;6000;;
+OPTION_CAPTEURS_SOL_REELS;22;Exceptional Optics NonDefault Model;8000;;
+OPTION_CAPTEURS_SOL_REELS;23;Medium Plus Optics;2000;;
+OPTION_CAPTEURS_SOL_REELS;24;Optics Plane AC-130/Drone;6000;;
+OPTION_CAPTEURS_SOL_REELS;25;Blind Optics;1000;;
+OPTION_CAPTEURS_SOL_REELS;26;Very Good Optics NonDefault Model;6000;;
+OPTION_CAPTEURS_SOL_REELS;27;Optics SAM HA + Med [Optics];3000;;
+OPTION_CAPTEURS_SOL_REELS;28;Medium Plus Optics NonDefault;3000;;
+OPTION_CAPTEURS_SOL_REELS;29;Medium Plus Optics Model;4000;;
+OPTION_CAPTEURS_SOL_REELS;30;Optics SHORAD +Med ND Model;3000;;
+OPTION_CAPTEURS_SOL_REELS;31;Medium Plus Optics SprutHelper;3200;;
+OPTION_CAPTEURS_SOL_REELS;32;Optics DroneHA RQ4;9000;;
+OPTION_CAPTEURS_SOL_REELS;33;Optics Drone 2250;8000;;
+OPTION_CAPTEURS_SOL_REELS;34;Optics Drone 2000;7000;;
+OPTION_CAPTEURS_SOL_REELS;35;Optics Carrier Solo;5000;;
+OPTION_CAPTEURS_SOL_REELS;36;Optics SAM HA + Bad ND;2000;;
+OPTION_CAPTEURS_SOL_REELS;41;Medium Plus Optics Manpad;2000;;
+OPTION_CAPTEURS_SOL_REELS;42;Medium Plus Optics Manpad;2000;;
+OPTION_CAPTEURS_SOL_REELS;43;Good Optics Manpad;3000;;
+# OPTION_VUE_AIR_REELLE : vue sur les aéronefs des unités au sol autres que la défense antiaérienne, hélicoptères compris : hélicoptère (basse altitude) à 3 km, avion (haute altitude) à 5 km si rien ne cache la vue ; navires 9 km (radar) ; équipages à pied 1,5 km ; DCA à radar ou optique des lignes 17/19 : 6 km comme les lignes 7/18. Identique pour les deux camps. Fichier généré.
+OPTION_VUE_AIR_REELLE;1;Good Optics;;3000;5000
+OPTION_VUE_AIR_REELLE;2;Medium Optics;;3000;5000
+OPTION_VUE_AIR_REELLE;3;Very Good Optics;;3000;5000
+OPTION_VUE_AIR_REELLE;4;Bad Optics;;3000;5000
+OPTION_VUE_AIR_REELLE;5;Exceptional Optics;;3000;5000
+OPTION_VUE_AIR_REELLE;10;Optics Arleigh Solo;;9000;9000
+OPTION_VUE_AIR_REELLE;12;Good Optics MH6;;3000;5000
+OPTION_VUE_AIR_REELLE;13;Good Optics NonDefault;;3000;5000
+OPTION_VUE_AIR_REELLE;14;Very Good Optics NonDefault;;3000;5000
+OPTION_VUE_AIR_REELLE;15;Exceptional Optics NonDefault;;3000;5000
+OPTION_VUE_AIR_REELLE;17;Optics SHORAD +Med ND;;6000;6000
+OPTION_VUE_AIR_REELLE;19;Optics SHORAD +Bad ND;;6000;6000
+OPTION_VUE_AIR_REELLE;20;Exceptional Optics Model Radar;;3000;5000
+OPTION_VUE_AIR_REELLE;22;Exceptional Optics NonDefault Model;;3000;5000
+OPTION_VUE_AIR_REELLE;23;Medium Plus Optics;;3000;5000
+OPTION_VUE_AIR_REELLE;25;Blind Optics;;1500;1500
+OPTION_VUE_AIR_REELLE;26;Very Good Optics NonDefault Model;;3000;5000
+OPTION_VUE_AIR_REELLE;28;Medium Plus Optics NonDefault;;3000;5000
+OPTION_VUE_AIR_REELLE;29;Medium Plus Optics Model;;3000;5000
+OPTION_VUE_AIR_REELLE;31;Medium Plus Optics SprutHelper;;3000;5000
+OPTION_VUE_AIR_REELLE;35;Optics Carrier Solo;;9000;9000
+OPTION_VUE_AIR_REELLE;43;Good Optics Manpad;;3000;5000

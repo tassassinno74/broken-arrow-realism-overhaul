@@ -1,0 +1,24 @@
+# Broken Arrow Realism Overhaul - vraies stats (données v1). Fichier généré par le mod à chaque version : pour changer une valeur, utiliser les fichiers *_override.csv du dossier parent.
+Option;Id;Name;AfterburnSpeed;MaxSpeed
+;19;Fighter-Top;411;
+;17;Fighter-Bomber;365;
+;18;Fighter-F16;411;
+;3;BigFast MiG31;417;
+;10;CAS;301;301
+;13;Drone Slow High;60;60
+;11;Drone Fast High;175;175
+;4;BigFast Tu22;292;292
+;20;BigSlow (Cargo);236;236
+;2;BigFast B1B;314;314
+;16;CAS F117;306;306
+;6;BigSlow;257;257
+;1;AC130;186;186
+;7;C130;186;186
+;5;BigFast Tu160;286;286
+;14;Drone Slow Low;56;56
+;12;Drone Medium High;86;86
+;23;C27;167;167
+;15;Drone VeryFast High;278;278
+;8;CAS A10;208;208
+;9;CAS Yak38;292;292
+;21;Drone MediumPlus High ;133;133

@@ -1,0 +1,34 @@
+# Broken Arrow Realism Overhaul - précision des mitrailleuses et des canons contre les hélicoptères. Sur les unités au sol seulement, chaque munition listée reçoit une 2e ligne « anti-heli » qui ne vise que les hélicoptères : portée anti-hélico de l'unité, dispersion donnée en milliradians (écart horizontal / vertical, la portée de référence de la dispersion vaut cette portée, donc l'écart grandit avec la distance), part des munitions de l'arme (le total ne change pas). La ligne d'origine ne vise plus les hélicoptères. Canons antiaériens, missiles, armes des hélicoptères et des avions : inchangés. Identique pour les deux camps. FuseeRadio : garder = fusée de proximité de la ligne d'origine, 0 = sans. DistanceCalibrage : distance (m) où le taux de touche prévu est gardé quand la forme réelle de la dispersion du jeu est mesurée. Option coupable : OPTION_PRECISION_ANTIHELICO.
+Option;SourceId;Name;Classe;EcartH_mrad;EcartV_mrad;PartHelico;FuseeRadio;DistanceCalibrage
+OPTION_PRECISION_ANTIHELICO;9;Bullet 7.62x54 MG Vehicles;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;27;Bullet 7.62x51 MG;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;75;InfBullet 7.62x54 MG T1;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;76;InfBullet 7.62x51 MG T2;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;153;InfBullet 7.62x51 MG T1;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;155;Bullet 7.62x51 Minigun;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;156;Bullet 7.62x54 Minigun;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;362;InfBullet 7.62x54 MG T2;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;386;InfBullet 7.62x54 MG T3;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;390;InfBullet 7.62x51 MG T3;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;472;InfBullet 6.8x51 MG T2;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;473;InfBullet 8.6x70 MG T3;MG7;40;17;0.25;garder;625
+OPTION_PRECISION_ANTIHELICO;19;Bullet 12.7x99;HMG;36;15;0.25;garder;875
+OPTION_PRECISION_ANTIHELICO;70;Bullet 12.7x108RU;HMG;36;15;0.25;garder;875
+OPTION_PRECISION_ANTIHELICO;280;Bullet 12.7x99 Minigun;HMG;36;15;0.25;garder;875
+OPTION_PRECISION_ANTIHELICO;488;InfBullet 12.7x108RU MG;HMG;36;15;0.25;garder;875
+OPTION_PRECISION_ANTIHELICO;163;Bullet 14.5;HMG;36;15;0.25;garder;875
+OPTION_PRECISION_ANTIHELICO;176;Round 23x115 AP23 Mixed;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;204;Round 30 2A42 T1 HE;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;205;Round 30 2A42 T2 HE;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;207;Round 30 2A72 T1 HE;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;177;Round 30 2A72 T2 HE;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;26;Round 25 Bushmaster T2 HE;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;36;Round 30 M230LF HEDP;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;567;Round 30 Rarden HE;CANON;32;15;0.25;garder;1250
+OPTION_PRECISION_ANTIHELICO;210;Round 30 2A42 T3 HE;CANON_CT;16;8;0.25;garder;1375
+OPTION_PRECISION_ANTIHELICO;196;Round 30 2A72 T3 HE;CANON_CT;16;8;0.25;garder;1375
+OPTION_PRECISION_ANTIHELICO;546;Round 30 2A42 T3 HE BMPT;CANON_CT;16;8;0.25;garder;1375
+OPTION_PRECISION_ANTIHELICO;277;Round 25 Bushmaster T3 HE;CANON_CT;16;8;0.25;garder;1375
+OPTION_PRECISION_ANTIHELICO;53;Round 30 Bushmaster2 HE T3;CANON_CT;16;8;0.25;garder;1375
+OPTION_PRECISION_ANTIHELICO;570;Round 35 Bushmaster3 HE T3;CANON_CT;16;8;0.25;garder;1375
+OPTION_PRECISION_ANTIHELICO;267;Round 57 2A91 Barbaris HE T3;CANON_CT;16;8;0.25;garder;1375

@@ -1,0 +1,51 @@
+# Broken Arrow Realism Overhaul - vraies stats : leurres (flares) des hélicoptères et avions. Hélicoptères : une salve toutes les 2,5 s au plus pendant une attaque (le jeu lâche une salve par seconde d'attaque et non par missile : avec 2,5 s entre deux salves, qui brûlent chacune 2,9 s, un leurre brûle toujours pendant l'attaque et le stock dure 2,5 fois plus longtemps) ; stock de base 30 salves sur la ligne de capacité (Mi-24K 64), puis stock propre à chaque hélicoptère écrit sur sa copie (reel/LeurresParUnite.csv : Mi-24, Mi-35 et Mi-28 64 ; Ka-52, Apache et autres hélicoptères d'attaque ou d'observation 30 ; transports légers 15 ; transports moyens, lourds et forces spéciales 30). Coût de ravitaillement par salve = 1000 / stock (un plein complet coûte toujours 1000). Avions inchangés : chasseurs 16, A-10/Su-25 40, B-52 25, au plus une salve toutes les 3 s (B-52 4 s). Chaque salve brûle 2,9 s, effet par salve 0.65. Identique pour le joueur et l'IA. Option coupable : OPTION_LEURRES_DEVIATION. Fichier généré.
+Option;Id;Name;DecoyQuantity;DecoyAccuracyMultiplier;DecoyDuration;DecoyCooldown;DecoySupplyCost;SprintDuration;SprintCooldown;LaserMaxRange
+OPTION_LEURRES_DEVIATION;21;ECM Heli 25 Default;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;22;ECM Heli 10 Default;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;23;ECM Heli 05 Default;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;24;ECM Heli 00 Default;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;25;ECM Heli 15 Default;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;26;ECM Heli 20 Default;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;84;ECM Heli 05 +Laser Mi24K;64;0.65;2.9;2.5;15.6
+OPTION_LEURRES_DEVIATION;86;ECM Heli 25 Model;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;302;ECM Heli 20 Model;30;0.65;2.9;2.5;33.3
+OPTION_LEURRES_DEVIATION;29;ECM Plane 20 Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;30;ECM Plane 10 Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;31;ECM Plane 10 Not Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;34;ECM Plane 15 + Laser Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;36;ECM Plane 05 Not Default CAS ;40;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;38;ECM Plane 10 Not Default CAS;40;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;44;ECM Plane 00 Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;46;ECM Plane 20 Not Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;47;ECM Plane 20 Not Default CAS;40;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;48;ECM Plane 00 Not Default CAS;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;49;ECM Plane 00 Default CAS;40;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;52;ECM Plane 15 Not Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;53;ECM Plane 05 Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;54;ECM Plane 00 Not Default;25;0.65;2.9;4;
+OPTION_LEURRES_DEVIATION;57;ECM Plane 05 Not Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;87;ECM Plane 15 SU25T;40;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;95;ECM Plane 20 + Laser Default;16;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;96;ECM Plane 20 SU25SM;40;0.65;2.9;3;
+OPTION_LEURRES_DEVIATION;201;ECM Plane 20 Not Default Model;16;0.65;2.9;3;
+# OPTION_VITESSE_INFANTERIE_REELLE : course des fantassins (bond sous le feu) 15 s au lieu de 10 s, puis 45 s de récupération au lieu de 30 s. Vitesse de marche inchangée (valeurs du jeu). Identique pour les deux camps. Fichier généré.
+OPTION_VITESSE_INFANTERIE_REELLE;11;Sprint Smoke;;;;;;15;45
+OPTION_VITESSE_INFANTERIE_REELLE;28;Sprint Smoke Laser;;;;;;15;45
+OPTION_VITESSE_INFANTERIE_REELLE;81;Sprint30 Smoke x4;;;;;;15;45
+OPTION_VITESSE_INFANTERIE_REELLE;89;Sprint Laser;;;;;;15;45
+OPTION_VITESSE_INFANTERIE_REELLE;90;Sprint;;;;;;15;45
+OPTION_VITESSE_INFANTERIE_REELLE;103;Sprint30 Smoke;;;;;;15;45
+# OPTION_LASER_PORTEE_REELLE : portée réelle des désignateurs laser : véhicules, équipes au sol, drones et hélicoptères 5 km ; avions 9 km (bord de la carte ; ils tirent leurs missiles à guidage laser vers 10 km). Identique pour les deux camps. Fichier généré.
+OPTION_LASER_PORTEE_REELLE;8;Laser Veh;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;10;Laser Veh Default;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;27;Laser Smoke x1 Default;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;85;Laser Smoke x2;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;28;Sprint Smoke Laser;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;89;Sprint Laser;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;92;Laser Drone 1500 Not Default;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;84;ECM Heli 05 +Laser Mi24K;;;;;;;;5000
+OPTION_LASER_PORTEE_REELLE;34;ECM Plane 15 + Laser Default;;;;;;;;9000
+OPTION_LASER_PORTEE_REELLE;45;Laser plane Default;;;;;;;;9000
+OPTION_LASER_PORTEE_REELLE;94;Laser plane NonDefault;;;;;;;;9000
+OPTION_LASER_PORTEE_REELLE;95;ECM Plane 20 + Laser Default;;;;;;;;9000
+OPTION_LASER_PORTEE_REELLE;100;Laser plane NonDefault Model;;;;;;;;9000

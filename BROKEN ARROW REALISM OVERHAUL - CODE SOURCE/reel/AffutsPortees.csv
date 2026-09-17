@@ -1,0 +1,10 @@
+# Broken Arrow Realism Overhaul - portées maximales selon la façon de viser (mètres réels). Une portée n'est jamais allongée : la copie de l'unité garde la plus petite des deux valeurs. Cellule vide = inchangé. La portée contre hélicoptère ne dépasse jamais la portée au sol. Fichier généré.
+Classe;Calibre;Munitions;GroundRange;LowAltRange
+OEIL;7,62 mm;9 27 155 156;600;600
+OEIL;12,7 mm;19 70 280 488;600;600
+OEIL;14,5 mm;163;600;600
+OEIL;lance-grenades 30/40 mm;50 99 118;600;600
+LUNETTE;7,62 mm;9 27 155 156;800;800
+LUNETTE;12,7 mm;19 70 280 488;1500;1000
+LUNETTE;14,5 mm;163;2000;1200
+LUNETTE;lance-grenades 30/40 mm;50 99 118;;

@@ -1,0 +1,237 @@
+# Broken Arrow Realism Overhaul - vraies stats : exemplaires maximum par carte selon la vétérance (limites réalistes). Fichier généré.
+UnitId;Name;Xp0;Xp1;Xp2;Xp3
+1;BTR-82;2;2;1;1
+2;M1A2 SEP v2 TUA;2;2;1;1
+4;2S19M1 Msta-S;3;2;2;1
+5;Stryker MC;2;2;1;1
+6;Humvee TOW-2;3;2;2;1
+8;AH-64D Longbow;2;2;1;1
+10;AN/TWQ-1 Avenger;3;2;2;1
+11;M142 HIMARS;2;2;1;1
+12;DLC3 Pantsir S1;2;2;1;1
+13;T-14 Armata;1;1;1;1
+19;AH-64D Apache;3;2;2;1
+20;Stryker M-SHORAD;3;2;2;1
+21;Stryker RV;2;2;1;1
+22;Stryker ICV;3;2;2;1
+23;Typhoon VDV;3;2;2;1
+24;Stryker MGS;2;2;1;1
+27;M6 Linebacker ;3;2;2;1
+28;M7 BFIST;3;2;2;1
+29;LAV-25;3;2;2;1
+31;Tor;2;2;1;1
+33;Stryker ESV;3;2;2;1
+34;LAV-AD;3;2;2;1
+40;M1287 MCV;2;2;1;1
+41;M1283 AMPV;3;2;2;1
+44;Su-57;1;1;1;1
+46;Ka-52 Alligator;2;2;1;1
+47;Humvee;3;2;2;1
+48;Humvee GMV;3;2;2;1
+49;Flyer GMV;3;2;2;1
+50;Hawkeye MWS;3;2;2;1
+53;M1A1 HC;3;2;2;1
+54;M1A1 FEP;3;2;2;1
+62;Troopers AT;3;2;2;1
+69;Stinger team;3;2;2;1
+73;Rangers Stinger;3;2;2;1
+78;AAVP-7A1;3;2;2;1
+79;MH-6 Little Bird;3;2;2;1
+82;M1301 ISV;3;2;2;1
+86;AH-1Z Viper;3;2;2;1
+87;AH-1W Supercobra;3;2;2;1
+91;A222 Bereg;2;2;1;1
+92;9K51 Grad;3;2;2;1
+93;9K58 Smerch;1;1;1;1
+94;Osa-AKM;3;2;2;1
+96;DLC3 Typhoon-K;3;2;2;1
+97;DLC3 9K58 Kama;2;2;1;1
+98;2S4 Tulpan;2;2;1;1
+99;IFAV;3;2;2;1
+100;Mi-24P Fantom;3;2;2;1
+102;Mi-24VP Krokodil;3;2;2;1
+103;MQ-9 Reaper;2;2;1;1
+105;DLC3 Ka-50 Akula;2;2;1;1
+106;AH-6 Killer Egg;3;2;2;1
+109;VDV Igla;3;2;2;1
+110;VDV Kornet;2;2;1;1
+120;PZRK Igla;3;2;2;1
+121;PTRK Konkurs;3;2;2;1
+134;PZRK Verba;3;2;2;1
+141;BTR-D;3;2;2;1
+142;BTR-MDM ;2;2;1;1
+143;DLC3 Mi-8AMTSh-VN;2;2;1;1
+145;Mi-8AMTSh;3;2;2;1
+147;CAAT TOW-2A;3;2;2;1
+151;Kornet-D1;2;2;1;1
+154;LAV-M;2;2;1;1
+155;2S41 Drok;3;2;2;1
+156;S-300V4 Antey;2;2;1;1
+160;AV-8B Night attack;2;2;1;1
+162;M109A7 Paladin;2;2;1;1
+163;Patriot PAC-2;2;2;1;1
+167;DLC3 Chaborz M-6;3;2;2;1
+168;Su-34;2;2;1;1
+169;Su-35S;2;2;1;1
+170;Orion;2;2;1;1
+172;BTR-RD Robot;2;2;1;1
+182;M551A1 Sheridan;2;2;1;1
+183;M8 AGS;2;2;1;1
+185;M113A3;3;2;2;1
+189;M1064A3;2;2;1;1
+190;M270A2 GMLRS;1;1;1;1
+191;M1A2 SEP v3;2;2;1;1
+194;DLC3 Tigr;3;2;2;1
+196;DLC3 Tigr Gibka;3;2;2;1
+197;DLC3 Tigr Kornet;2;2;1;1
+198;TOS-1;2;2;1;1
+200;MT-LB SPAAG;2;2;1;1
+201;Shturm-S;2;2;1;1
+202;MT-LB Strela;3;2;2;1
+203;MT-LB Mortar;3;2;2;1
+204;BTO;2;2;1;1
+205;2S1 Gvozdika ;4;3;2;2
+206;BTR-ZD Skrezhet;2;2;1;1
+207;2S9 Nona-S;2;2;1;1
+209;BRM-3K;2;2;1;1
+210;2S31 Vena;2;2;1;1
+211;Derivatsiya;3;2;2;1
+212;BT-3F;3;2;2;1
+213;Kornet-T;2;2;1;1
+216;BMO-1;3;2;2;1
+218;2S23 Nona-SVK;2;2;1;1
+219;DLC3 BPM-97;2;2;1;1
+220;DLC3 BPM-97 Strela;3;2;2;1
+223;DLC3 9K512 Uragan-1M;1;1;1;1
+224;DLC3 TOS-2 Tosochka;2;2;1;1
+225;S-350 Vityaz;2;2;1;1
+226;9K720 Iskander;2;2;1;1
+227;DLC3 S-400 Triumph;2;2;1;1
+231;Buk M2;3;2;2;1
+232;2S35 Koalitsiya-SV;2;2;1;1
+233;2K22M Tunguska-M;2;2;1;1
+234;2S3M1 Akatsia;4;3;2;2
+235;BMO-T;3;2;2;1
+237;T-90M Razvedchik;1;1;1;1
+240;BMPT Terminator;2;2;1;1
+243;M1A2 SEP v2;3;2;2;1
+244;M1A2 SEP;3;2;2;1
+245;M1A2 Abrams;3;2;2;1
+247;M109A6 Paladin;4;3;2;2
+250;Centurion C-RAM;2;2;1;1
+251;Patriot PAC-3;2;2;1;1
+252;BRDM ATGM;3;2;2;1
+253;K16 Bumerang;2;2;1;1
+254;B10 Kurganets;2;2;1;1
+255;T-15 Barbaris;2;2;1;1
+256;Mi-28N Ohotnik;3;2;2;1
+263;Mi-35M;3;2;2;1
+267;OH-58D Kiowa Warrior;3;2;2;1
+268;Mi-38T;2;2;1;1
+269;Mi-24PN;3;2;2;1
+270;AH-64E Guardian;2;2;1;1
+271;Ka-52K Katran;2;2;1;1
+272;MH-60M DAP;2;2;1;1
+273;Ka-29;3;2;2;1
+280;Tu-22M3;1;1;1;1
+281;IL-76MD;2;2;1;1
+282;A-10C Thunderbolt II;2;2;1;1
+283;F-15C Eagle;2;2;1;1
+284;F-16V Viper;2;2;1;1
+285;F-16C Fighting Falcon;3;2;2;1
+286;F-16CJ;2;2;1;1
+287;F-15E Strike Eagle;2;2;1;1
+288;AV-8B Harrier II Plus;2;2;1;1
+289;F-15EX Eagle II;2;2;1;1
+291;F/A-18C Hornet;2;2;1;1
+292;F/A-18D Hornet ;2;2;1;1
+293;B-1B Lancer;1;1;1;1
+294;F-35A;2;2;1;1
+295;F-35B;2;2;1;1
+297;F-22 Raptor;1;1;1;1
+299;B-2 Spirit;1;1;1;1
+300;B-52H Stratofortress;1;1;1;1
+301;AC-130;1;1;1;1
+303;KC-130J Harvest Hawk;1;1;1;1
+306;Su-24M2;2;2;1;1
+307;Su-25SM;2;2;1;1
+308;Su-24MP;2;2;1;1
+309;MiG-35;2;2;1;1
+310;MiG-29SMT;2;2;1;1
+311;MiG-29K;2;2;1;1
+312;Su-33;2;2;1;1
+313;YaK-38M;3;2;2;1
+314;DLC3 Yak-130;3;2;2;1
+315;DLC3 MiG-31BM;2;2;1;1
+316;DLC3 An-26;2;2;1;1
+317;Tu-160;1;1;1;1
+318;DLC3 MiG-31K;1;1;1;1
+319;Su-30SM;2;2;1;1
+329;Korsar;2;2;1;1
+331;DLC3 Tu-95;1;1;1;1
+356;PZRK Igla-S;3;2;2;1
+362;MQ-1 Predator;2;2;1;1
+363;MQ-1C Gray Eagle;2;2;1;1
+364;RAH-66 Comanche;1;1;1;1
+371;Mech. Riflemen AA;3;2;2;1
+373;Tochka-U;2;2;1;1
+374;Su-25T;1;1;1;1
+376;M270 MLRS;2;2;1;1
+377;EA-6B Prowler;2;2;1;1
+380;Mi-28NM Mikhalych;2;2;1;1
+382;2S39 Magnolia;2;2;1;1
+383;BTR-90;2;2;1;1
+388;Brutus;1;1;1;1
+389;SLAMRAAM;2;2;1;1
+392;LMTV War Pig;2;2;1;1
+393;MML;2;2;1;1
+394;DT-30AA;1;1;1;1
+397;AN-72P;2;2;1;1
+404;Motostrelki Igla;3;2;2;1
+408;CAAT Javelin;3;2;2;1
+413;Troopers AA;3;2;2;1
+414;TOW-2A;3;2;2;1
+421;M985 Battleship;3;2;2;1
+422;2S7M Malka;2;2;1;1
+425;BTR-80;3;2;2;1
+440;BALT Stinger team;3;2;2;1
+442;BALT Javelin team;3;2;2;1
+448;Patriot PAC-3 MSE;2;2;1;1
+450;BMOP Toros;3;2;2;1
+452;Stryker SPH;1;1;1;1
+453;M10 Booker;2;2;1;1
+459;PTRK Kornet;2;2;1;1
+465;Su-27SM;2;2;1;1
+466;S-300PM Favorit;2;2;1;1
+467;M-ATV;3;2;2;1
+499;DLC2 Spartan;2;2;1;1
+500;DLC2 Vilkas;3;2;2;1
+501;DLC2 XA-180;3;2;2;1
+502;DLC2 M113;3;2;2;1
+503;DLC2 Leopard 2A8;2;2;1;1
+508;DLC2 NASAMS;2;2;1;1
+509;DLC2 TGB-1111;3;2;2;1
+510;DLC2 M113 Panzermorser;2;2;1;1
+511;DLC2 M109A5O;4;3;2;2
+512;DLC2 L-39 Albatros;3;2;2;1
+519;DLC2 Milan;3;2;2;1
+520;DLC2 Javelin;3;2;2;1
+522;DLC2 Piorun;3;2;2;1
+535;DLC2 HMMWV;3;2;2;1
+538;DLC2 Unimog AA;3;2;2;1
+539;DLC2 K9EST ;3;2;2;1
+540;DLC2 PzH-2000;3;2;2;1
+541;DLC2 G-Wagen;2;2;1;1
+542;DLC2 TypeX RCV;2;2;1;1
+545;DLC2 IRIS-T SLM;3;2;2;1
+627;DLC3 Shchuka;2;2;1;1
+628;DLC3 Uran-9;2;2;1;1
+632;DLC3 MDP-01 Termit;3;2;2;1
+633;DLC3 S-70 Okhotnik;1;1;1;1
+635;DLC3 2S40 Floks;2;2;1;1
+636;DLC3 2S43 Malva;2;2;1;1
+702;DLC3 MiG-31K (S);1;1;1;1
+703;T-72B3A;2;2;1;1
+704;Motostrelki Igla2;3;2;2;1
+705;Mech. Riflemen AA2;3;2;2;1
+706;Troopers AA2;3;2;2;1

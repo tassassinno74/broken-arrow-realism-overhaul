@@ -1,0 +1,277 @@
+# Broken Arrow Realism Overhaul - vraies stats (données v1). Fichier généré par le mod à chaque version : pour changer une valeur, utiliser les fichiers *_override.csv du dossier parent.
+Option;Id;Name;MagazineReloadTimeMin;MagazineReloadTimeMax;MagazineSize;FlashPerShot;AimTimeMin;AimTimeMax;TimeBetweenBurstsMin;TimeBetweenBurstsMax;CanShootOnTheMove
+;9;MainGun 125 T72B 2A46M;6.5;;;;;;;;
+;349;MainGun 125 T72BA 2A46M;6.5;;;;;;;;
+;516;MainGun 125 T72B 2A46M HEAT;6.5;;;;;;;;
+;197;MainGun 125 Sprut 2A75;7.5;;;;;;;;
+;221;MainGun 125 T72B3;6.5;;;;;;;;
+;1023;MainGun 125 T72B3 obr16;6.5;;;;;;;;
+;222;MainGun 125 T80BVM 2A46M4 ;7.1;8;;;;;;;
+;334;MainGun 125 T80BV 2A46M1;7.1;8;;;;;;;
+;321;MainGun 76 PT76 D56TS;7.5;10;;;;;;;
+;322;Autocannon 57 AU220M PT76;;;80;;;;;;
+;332;MainGun 125 T90 2A46M2 ;6.5;;;;;;;;
+;333;MainGun 125 T90M 2A46M501;6.5;;;;;;;;
+;335;MainGun 125 T80U 2A46M1;7.1;8;;;;;;;
+;336;MainGun 125 T80UM 2A46M1;7.1;8;;;;;;;
+;337;MainGun 125 T80UA 2A46M4;7.1;8;;;;;;;
+;901;MainGun 115 2A20 T1 NoAtgm;7.5;8.5;;;;;;;
+;903;MainGun 115 2A20 T1;7.5;8.5;;;;;;;
+;904;MainGun 115 2A20 T2;7.5;8.5;;;;;;;
+;913;MainGun 125 T72A 2A46 ;6.5;;;;;;;;
+;258;MainGun 105 M8AGS XM35;;5;;;;;;;
+;585;ATGM KornetM x1 ;30;30;;;;;;;
+;716;ATGM Spike LR x1;15;15;;;;;;;
+;733;RocketLauncher 90 Pvpj1110 ;7.5;7.5;;3;;;;;
+;782;ATGM Spike LR x1 Static;15;15;;;;;;;
+;511;Howitzer 152 2A64 T2 MSTA-S;7.5;7.5;;;;;;;
+;3;Howitzer 152 2A64 T1 MSTA-S;7.5;;;;;;;;
+;41;Howitzer 105 M20 Hawkeye;7.5;7.5;;;;;;;
+;562;Howitzer 105 M20 Hawkeye Loadout2;7.5;7.5;;;;;;;
+;563;Howitzer 105 M20 Hawkeye Loadout3;7.5;7.5;;;;;;;
+;725;Howitzer 105 M20 Hawkeye Loadout4;7.5;7.5;;;;;;;
+;233;Howitzer 155 M284 M109A7;15;15;;;;;;;
+;288;Howitzer 122 2A31 GvozdikaM1;12;12;;;;;;;
+;289;Mortar 120 2A80 Hosta;6;;;;;;;;
+;330;Howitzer 152 2A33 AkatsiyaM1;15;15;;;;;;;
+;331;Howitzer 152 2A33 AkatsiyaM2;15;15;;;;;;;
+;344;Howitzer 155 M284 M109A6;15;15;;;;;;;
+;568;Howitzer 155 M284 M109A6 Double;15;15;;;;;;;
+;636;Howitzer 203 2A44 Malka Loadout1;24;24;;;30;60;;;
+;710;Howitzer 203 2A44 Malka Loadout2;24;24;;;30;60;;;
+;703;Mortar Unkown UR77 x2;;;;;30;60;;;
+;777;Howitzer 155 M284 M109A5O;15;15;;;;;;;
+;778;Howitzer 155 M284 M109A5O Double;15;15;;;;;;;
+;780;Howitzer 155 K9 Loadout1;7.5;7.5;;;;;;;
+;781;Howitzer 155 K9 Loadout2;7.5;7.5;;;;;;;
+;950;Howitzer 152 2A64 Malva;7.5;;;;;;;;
+;10;MLRS 227 HIMARS;;;;;16;16;;;
+;254;MLRS 227 HIMARS CLU;;;;;16;16;;;
+;37;Ballistic ATACMS;;;;;16;16;;;
+;569;Ballistic PrSM x2;;;;;16;16;;;
+;92;MLRS 122 Grad HE;;;;;;;0.5;0.5;
+;571;MLRS 122 Grad Cluster;;;;;;;0.5;0.5;
+;573;MLRS 122 Grad Incendiary;;;;;;;0.5;0.5;
+;712;MLRS 122 Grad Smoke;;;;;;;0.5;0.5;
+OPTION_MISE_EN_BATTERIE;92;MLRS 122 Grad HE;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;571;MLRS 122 Grad Cluster;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;573;MLRS 122 Grad Incendiary;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;712;MLRS 122 Grad Smoke;;;;;180;180;;;
+;93;MLRS 300 Smerch;;;;;;;3.5;3.5;
+;572;MLRS 300 Smerch Cluster;;;;;;;3.5;3.5;
+;677;MLRS 300 Smerch Tornado;;;;;;;3.5;3.5;
+;678;MLRS 300 Smerch Tornado Cluster;;;;;;;3.5;3.5;
+OPTION_MISE_EN_BATTERIE;93;MLRS 300 Smerch;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;572;MLRS 300 Smerch Cluster;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;677;MLRS 300 Smerch Tornado;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;678;MLRS 300 Smerch Tornado Cluster;;;;;180;180;;;
+;95;MLRS 300 Kama Slow;;;;;;;4;4;
+;96;MLRS 300 Kama Fast;;;;;;;4;4;
+;906;MLRS 300 Kama Double;;;;;;;4;4;
+;907;MLRS 300 Sarma Double;;;;;;;4;4;
+OPTION_MISE_EN_BATTERIE;95;MLRS 300 Kama Slow;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;96;MLRS 300 Kama Fast;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;906;MLRS 300 Kama Double;;;;;180;180;;;
+OPTION_MISE_EN_BATTERIE;907;MLRS 300 Sarma Double;;;;;180;180;;;
+;218;Mortar 82 2B27 Drok;5;5;;;;;;;
+;559;Mortar 82 Drok Doube;5;5;;;;;;;
+;284;Mortar 82 Deva;2;2;;;;;;;
+;286;Mortar 120 Dilemma;;4;;;;;;;
+;293;Mortar 120 2A51M NonaSM [more rof, fcs+];6;6;;;;;;;
+;292;Mortar 120 2A51 NonaS NonaSVK;6;6;;;;;;;
+;290;Mortar 120 2A80 Vena;6;6;;;;;;;
+;558;Mortar 120 2A80 Vena Double;6;6;;;;;;;
+;555;Mortar 120 2A51 Sviristelka NonaSVK Double;6;6;;;;;;;
+;16;SAM Stinger x8;240;240;;;;;;;
+;26;SAM Stinger x4;120;120;;;;;;;
+;20;SAM 57E6E x12 Pantsir;;;;;4;6;;;
+;28;SAM x8 Tor-M1;;;;;7;10;;;False
+;99;SAM x16 Tor-M2;;;;;2;3;;;
+;94;SAM 9M33 x6 OsaAKM;;;;;26;26;;;
+;605;SAM 9M33 x6 OsaAKM1;;;;;26;26;;;False
+;281;SAM Strela10MN x4;180;180;;;;;;;
+;283;SAM Sosna x12 ;;;;;5;5;;;
+;328;SAM 9M311 x8 Tunguska;;;;;8;10;;;
+;329;SAM 9M3111M x8 TunguskaM1;;;;;8;10;;;
+;619;SAM x4 SLAMRAAM;;;;;10;10;;;
+;620;SAM x6 SLAMRAAM;;;;;10;10;;;
+;621;SAM AIM9 x2 SLAMRAAM ;;;;;10;10;;;
+;628;SAM 57E6E x18 Pantsir;;;;;4;6;;;
+;772;SAM x6 NASAMS AMRAAM;;;;;10;10;;;
+;773;SAM x6 NASAMS AIM9;;;;;10;10;;;
+;774;SAM x6 NASAMS AMRAAM ER;;;;;10;10;;;
+;552;ATGM Hellfire x1 ;;;4;;;;;;
+;112;Autocannon 23 GSh23L Pylon Helicopter;;;25;;;;;;
+;776;Autocannon 20 NC621 Pylon Heli;;;36;;;;;;
+;961;ATGM Hellfire x2 UAV;;;8;;;;;;
+;485;Cruise Kh32;;;3;;;;;;
+;429;Cruise JASSM x6 ;;;20;;;;;;
+;430;Cruise AGM86 x6;;;12;;;;;;
+;80;PlaneGun 40 Bofors AC130;;;4;;;;;;
+;943;Cruise Kh101 x1;;;8;;;;;;
+;958;ATGM Hellfire x1 UAV;;;2;;;;;;
+;588;ATGM Vikhr x8 Plane;;;16;;;;;;
+;205;ATGM TOW2A x1 (Infantry);10;12;;2;;;;;
+;62;ATGM Javelin Infantry;15;20;;;4;6;;;
+;144;ATGM Kornet x1 (Infantry) ;10;15;;2;;;;;
+;149;ATGM Kornet x1 Team2 (Infantry) ;10;15;;2;;;;;
+;141;ATGM Konkurs x1 (Infantry);9;10;;2;;;;;
+;177;ATGM MetisM x1 Infantry;8;12;;2;;;;;
+;175;ATGM Fagot x1 (Infantry);9;10;;2;;;;;
+;176;ATGM Fagot x1 (Infantry) Team2;9;10;;2;;;;;
+;746;ATGM MilanER x1 Infantry;7;8;;2;;;;;
+;759;ATGM MilanER x1 Infantry Team2;7;8;;2;;;;;
+;159;RocketLauncher SPG9;8;9;;4;;;;;
+;172;RocketLauncher RPG29 ;28;30;;4;;;;;
+;202;RocketLauncher RAWS;8;9;;4;;;;;
+;787;RocketLauncher RAWS FST;8;9;;4;;;;;
+;505;RocketLauncher CarlGustavM4 (MAAWS);8;9;;4;;;;;
+;61;RocketLauncher SMAW;18;20;;4;;;;;
+;742;RocketLauncher B300;18;20;;4;;;;;
+;54;DMR 7.62 M110 T1;;;20;;;;;;False
+;504;DMR 7.62 Mk110 Silenced T2;;;20;;;;;;False
+;540;DMR 7.62 M110 Silenced T2;;;20;;;;;;False
+;696;DMR 7.62 R20L T2;;;20;;;;;;False
+;721;DMR SCARH T2;;;20;;;;;;False
+;161;Shotgun Saiga12;;;8;;;;;;
+;25;ATGM TOW2 x2;40;60;;;;;;;
+;613;ATGM TOW BB x2;40;60;;;;;;;
+;248;ATGM KonkursM x1;20;30;;;;;;;
+;576;ATGM Fagot x1;20;30;;;;;;;
+;577;ATGM FagotM x1;20;30;;;;;;;
+;702;Autocannon 35 Bushmaster3;60;90;70;;;;;;
+;198;SAM IglaS x2 ZU23;;;;;5;6;;;
+;587;ATGM MetisM1 x1;15;15;;;;;;;
+;279;ATGM Kokon x1 Sturm;15;15;;;;;;;
+;280;ATGM Ataka x1 Sturm;15;15;;;;;;;
+;304;ATGM Khrizantema x2;15;15;;;;;;;
+;663;RocketLauncher SPG9 UAZ;10;10;;;;;;;
+;541;ATGM TOW2 x2 Double;40;60;;;;;;;
+;90;Howitzer 130 AK130 ;;;;;60;120;;;
+;556;Howitzer 130 AK130 Double;;;;;60;120;;;
+;316;Ballistic IskanderM HE;;;;;30;60;;;
+;317;Cruise IskanderK x2;;;;;30;60;;;
+;318;Cruise IskanderK x4;;;;;30;60;;;
+;711;Ballistic IskanderM Clus;;;;;30;60;;;
+;581;Ballistic TochkaU;;;;;90;120;;;
+;582;Ballistic TochkaU Double;;;;;90;120;;;
+;98;Mortar 240 2B8 Tyulpan;60;60;;;;;;;
+;220;SAM x4 S300V;900;900;;;;;;;
+;307;SAM x2 S300V;900;900;;;;;;;
+;236;SAM x4 Patriot;900;900;;;;;;;
+;238;SAM x2 Patriot ;900;900;;;;;;;
+;315;SAM x12 S350;600;600;;;;;;;
+;685;SAM x12 S350 Double;600;600;;;;;;;
+;319;SAM x4 S400;600;600;;;;;;;
+;320;SAM x16 S400;600;600;;;;;;;
+;323;SAM x4 BUK;780;780;;;;;;;
+;347;SAM x16 Patriot;900;900;;;;;;;
+;366;SAM x8 Patriot;900;900;;;;;;;
+;346;SAM x12 Patriot MSE;900;900;;;;;;;
+;651;SAM x8 Patriot MSE;900;900;;;;;;;
+;650;SAM x4 Patriot MSE;900;900;;;;;;;
+;690;SAM x4 S300PM;900;900;;;;;;;
+;691;SAM x4 S300PM2;900;900;;;;;;;
+;784;SAM x8 IRIST;900;900;;;;;;;
+;783;SAM x4 IRIST;900;900;;;;;;;
+;154;ATGM Metis x1 (Infantry) Team1;;;;2;;;;;
+;635;ATGM Metis x1 (Infantry) Team2;;;;2;;;;;
+;506;ATGM M47 Dragon3 (Infantry) Team1;;;;2;;;;;
+;617;ATGM M47 Dragon3 (Infantry) Team2;;;;2;;;;;
+;644;ATGM SpikeSR Disposable;;;;;3;4;;;
+;32;RocketLauncher RPG7V (PG7-L);;;;4;;;;;
+;789;RocketLauncher RPG7V (PG7-L) FST;;;;4;;;;;
+;933;RocketLauncher RPG7 PG7VM;;;;4;;;;;
+;143;RocketLauncher RPG7D PG7VR;;;;4;;;;;
+;632;RocketLauncher RPG7V OG7V;;;;4;;;;;
+;168;RocketLauncher 73 RPG26  Disposable;;;;4;;;;;
+;517;RocketLauncher 73 RShG2 Disposable ;;;;4;;;;;
+;171;RocketLauncher RPG27 Disposable;;;;4;;;;;
+;179;RocketLauncher RPG28 Disposable;;;;4;;;;;
+;931;RocketLauncher  RPG18  Disposable ;;;;4;;;;;
+;539;RocketLauncher RPOM x4 Disposable;;;;4;;;;;
+;155;RocketLauncher Bur;;;;4;;;;;
+;1019;RocketLauncher M72A3 LAW Disposable;;;;4;;;;;
+;59;RocketLauncher AT4 Disposable;;;;4;;;;;
+;631;RocketLauncher AT4 HP Disposable;;;;4;;;;;
+;200;RocketLauncher M141 BDM Disposable;;;;4;;;;;
+;757;RocketLauncher C90CRBK Disposable;;;;4;;;;;
+;65;AAM Stinger F Infantry;;;;;5;6;;;
+;630;AAM Stinger J Infantry;;;;;5;6;;;False
+;160;AAM IglaN Infantry ;;;;;5;6;;;False
+;170;AAM IglaN Infantry Team2;;;;;5;6;;;False
+;583;AAM IglaD Infantry;;;;;5;6;;;False
+;146;AAM Verba (Infantry);;;;;5;6;;;False
+;193;AAM Verba Infantry Team2;;;;;5;6;;;False
+;747;AAM Piorun Infantry;;;;;5;6;;;False
+;75;AGL 40  Mk19 Infantry;;;;;3;5;;;
+;203;AGL 40  Mk47 Infantry;;;;;3;5;;;
+;148;AGL 30  AGS30 Infantry;;;;;3;5;;;
+;578;AGL 30  AGS17 Infantry;;;;;3;5;;;
+;185;AGL 40  AGS40 Infantry ;;;;;3;5;;;
+;365;MGL 25 XM25;;;;;3;4;;;
+;184;MGL 45 DP64;;;;;3;4;;;
+;50;Rifle M4A1 T1;;;;;;2;;;
+;362;Rifle M16A4 T1;;;;;;2;;;
+;638;Rifle G36K T1;;;;;;2;;;
+;693;Rifle R20 Rahe T2;;;;;;2;;;
+;740;Rifle Galil T1;;;;;;2;;;
+;70;Rifle M4A1 Mod. II T2;;;;;;2;;;
+;722;Rifle M4 URGI T3;;;;;;2;;;
+;751;Rifle R20S T3;;;;;;2;;;
+;210;Rifle HK416 T3 Silenced;;;;;;2;;;
+;51;Rifle M27 T3 SmallSquads;;;;;;2;;;
+;55;DMR 5.56 Mk12 Silenced T3;;;;;;;;;False
+;60;Autorifle M249E3 T1;;;;;;3;;;
+;364;Autorifle M249 T1;;;;;;3;;;
+;694;Autorifle 5.56 Negev T1;;;;;;3;;;
+;53;Autorifle M249 Para T2;;;;;;3;;;
+;211;Autorifle Mk46 Silenced T3;;;;;;2;;;
+;753;Autorifle MG4 T3;;;;;;3;;;
+;63;MMG 7.62 M240L Infantry;;;;;;;;;False
+;695;MMG 7.62 Negev T2 Infantry;;;;;;;;;False
+;642;MMG 7.62 MG3 T1 Infantry;;;;;;;;;False
+;209;MMG XM250 T2 Infantry;;;;;;;;;False
+;1021;MMG 6.8 M240L6.8 Infantry;;;;;;;;;False
+;629;MMG 8.6 Norma SIG338 Infantry;;;;;;;;;False
+;785;DMR 7.62 Galatz T1;;;;;;;;;False
+;532;DMR 7.62 SCAR Mk20 T3;;;;;;;;;False
+;64;Sniper 7.62 M40A5 T2;;;;;6;8;;;
+;73;Sniper 7.62 M2010 Silenced T2;;;;;6;8;;;
+;909;Shotgun KS23;4;4;;;;;;;
+;206;HMG M2 Browning 12.7 Infantry;;;;0.8;;;;;
+;207;HMG M2 Browning 12.7 Infantry Team2;;;;0.8;;;;;
+;145;HMG Kord (Infantry);;;;0.8;;;;;
+;174;HMG Kord (Infantry) Team 2;;;;0.8;;;;;
+;915;Autorifle 12.7 6P62 T3 Silenced;;;;;2;3;;;
+;29;Rifle AK74M T1;;;;;;2;;;
+;123;Rifle AK12 T1;;;;;;2;;;
+;191;Rifle AK105 T1;;;;;;2;;;
+;930;Rifle AKS74U;;;;;;2;;;
+;156;Rifle AK74 T0;;;;;;2;;;
+;122;Rifle AK74RMO T2;;;;;;2;;;
+;182;Rifle ADS T3;;;;;;2;;;
+;140;Rifle A545 T3;;;;;;2;;;
+;527;Rifle AN94 T3 ;;;;;;2;;;
+;14;Autorifle RPK74M T1;;;;;;3;;;
+;501;Autorifle RPK74 T0;;;;;;3;;;
+;129;Autorifle RPK74M Kashtan T2;;;;;;3;;;
+;132;Autorifle RPK16 PBS T3;;;;;;2;;;
+;1006;DMR RPK74 PSO T2 ;;;;;;;;;False
+;133;Rifle AKM Silenced T1;;;;;;2;;;
+;134;Rifle AK103 Silenced T2;;;;;;2;;;
+;135;Rifle AK15 Silenced T3;;;;;;2;;;
+;1011;Rifle AK15SK Silenced T3;;;;;;2;;;
+;522;Rifle A762 Silenced T3;;;;;;2;;;
+;139;Rifle ASVAL T3;;;20;;;;;;
+;188;DMR VSS Silenced T3;;;;;;;;;False
+;180;Rifle ShAK12 T3;;;20;;;;;;
+;189;Sniper 12.7 VSSK T3;;;;;6;8;;;
+;30;MMG 7.62 PKP T1 Infantry;;;;;;;;;False
+;158;MMG 7.62 PKM T1 Infantry;;;;;;;;;False
+;125;MMG 7.62 PKPM T2;;;;;;;;;False
+;167;DMR SVD T1;;;;;;;;;False
+;151;DMR SVDS T2;;;;;;;;;False
+;502;DMR 9.3x64 SVDK T3;;;;;;;;;False
+;136;Sniper 7.62 SV98 T2;;;;;6;8;;;
+;152;Sniper 8.6 Lapua T5000 T2;;;;;6;8;;;

@@ -1,0 +1,182 @@
+# Broken Arrow Realism Overhaul - vraies stats (données v1). Fichier généré par le mod à chaque version : pour changer une valeur, utiliser les fichiers *_override.csv du dossier parent.
+Option;Id;Name;MaxSpeedRoad;MaxCrossCountrySpeed;MaxSpeedReverse;MaxSpeedWater
+;113;Tracks T72BA;60;45;4
+;112;Tracks T72 60kmh;;;4
+;50;Tracks Sprut;;50;
+;230;Tracks Sprut Armored;;50;
+;55;Tracks T72B3 obr16;65;45;4
+;114;Tracks T72B3 Stock;65;;4
+;56;Tracks T80BVM;;48;
+;106;Tracks T80BV;;48;11
+;98;Tracks PT76 Base;44;25;
+;99;Tracks PT76 Fast;;42;
+;103;Tracks T90A Base;;;4
+;104;Tracks T90A Fast;65;45;4
+;105;Tracks T90M;;50;4
+;107;Tracks T80U;70;48;11
+;301;Tracks T62 Base;;40;
+;307;Tracks Uran9;35;25;
+;1;Tracks M1A2 Abrams 70kph;67;48;
+;9;Tracks M60A1;48;19;16
+;23;Tracks M1A1 Abrams  65kph;67;48;
+;76;Tracks M551A1 Sheridan;69;;14
+;75;Tracks M8 AGS;72;48;
+;179;Tracks M8 AGS NonAir;72;48;
+;13;Tracks M1A2 Abrams 65kph;;48;
+;228;Tracks M10Booker;64;;
+;267;Tracks Leo2A8 65kph;68;;31
+;4;Tracks BMP3;;45;
+;10;Tracks Bradley M2A2;61;40;
+;35;Tracks BMD4M;;45;
+;187;Tracks BMD4M NonAD;;45;
+;74;Wheels ACV;105;;
+;88;Tracks BMP2;;45;
+;184;Tracks BMP1;;45;
+;185;Tracks BMP1 Armored;;45;
+;250;Tracks CV9035;72;;43
+;252;Wheels Vilkas Boxer Base;103;;
+;15;Wheels Naparnik;105;;
+;206;Tracks AMPV;61;;
+;20;Wheels HMMWV;113;;
+;110;Wheels HMMWV Slow;89;;
+;403;Wheels Flyer;153;;
+;24;Tracks AAVP7A1;72;32;
+;42;Wheels TyphoonK;105;;
+;36;Tracks BMD2 BTRD;61;35;
+;78;Tracks M113A3;66;;
+;5;Wheels Tigr Fast;;80;
+;218;Tracks MTLB ;61.5;30;
+;219;Tracks MTLB Armored;61.5;30;
+;213;Wheels LMTV Warpig;94;;
+;215;Wheels XA180;105;;
+;257;Wheels XA180 Armored;105;;
+;306;Wheels Shchuka;85;;
+;52;Wheels Sarmat2;120;;
+;84;Tracks MTLB Supply;61.5;30;
+;85;Tracks MTLB Supply Armored;61.5;30;
+;199;Tracks DT30 Supply;45;;
+;223;Wheels URAL4320 Supply;82;;
+;242;Wheels URAL4320 Armored Supply;82;;
+;226;Tracks MTLBU;61.5;30;
+;243;Tracks MTSM;;45;
+;19;Wheels Guardian M1117;101;;
+;27;Wheels LMTV;94;;
+;237;Wheels LMTV armored;94;;
+;109;Tracks M548A3 ;61;;
+;212;Wheels MTV ;94;;
+;266;Tracks CRVT Spartan;96;;
+;188;Tracks MstaS;;25;
+;63;Tracks M109A7 ;61;;
+;86;Tracks Gvozdika ;62;30;
+;93;Wheels MZKT Astrolog;;40;
+;100;Tracks Koalitsiya;63;;
+;101;Tracks Akatsiya;63;;14
+;236;Tracks M109A6;56;;
+;186;Wheels TochkaU;60;15;
+;261;Tracks K9EST;67;;
+;262;Tracks PZH2000;67;45;
+;310;Wheels 2S43 Malva;80;;
+;38;Wheels Grad BM21;75;35;
+;39;Wheels Smerch 9K58;;35;
+;44;Tracks Tulpan 2S4;63;;
+;79;Tracks M270;64;;
+;200;Tracks DT30 ;45;;
+;12;Wheels Stryker Base;97;;
+;189;Wheels Stryker Armored;97;;
+;40;Wheels OsaAKM;80;;
+;91;Tracks Shilka ;;30;
+;64;Wheels Patriot;80;;
+;95;Wheels S350;80;;
+;265;Wheels IRIST;90;;
+;7;Heli AH-64D;293;;
+;48;Heli KA50 52;315;260;90
+;34;Heli AH1Z;;296;
+;60;Heli AH1W;315;282;
+;46;Heli MI24;335;270;
+;25;Heli MH6;282;;
+;117;Heli MI28;324;;100
+;122;Heli Kiowa;240;204;
+;124;Heli AH-64E;293;;
+;183;Heli RAH66;324;306;
+;308;Heli MDP01;150;90;
+;6;Heli MI8MTV5;250;240;
+;59;Heli CH47D;315;291;
+;26;Heli Osprey;509;446;
+;28;Heli UH60M Supply;289;;
+;401;Heli MI8AMTSh-VN;280;280;
+;62;Heli MI8AMTSh;250;240;
+;53;Heli CH53E;315;;
+;57;Heli UH1Y;304;293;
+;118;Heli KA60;300;;
+;119;Heli KA226;250;220;
+;120;Heli MI26;295;;
+;123;Heli MI38;300;250;
+;125;Heli KA29;280;;
+;126;Heli CH53K;;293;
+;258;Heli AS365;306;;
+;31;Plane Su57;1350;;
+;68;Plane SU34;1435;;
+;69;Plane Su35;1400;;
+;156;Plane Su35 1xFuel;1400;;
+;132;Plane F15C Base;1481;;
+;133;Plane F15C 1xFuel;1481;;
+;134;Plane F15C 2xFuel;1481;;
+;135;Plane F15C 3xFuel;1481;;
+;137;Plane F16 BLK70 Base;1481;;
+;138;Plane F16 BLK70 2xFuel;1481;;
+;136;Plane F16 Base;1481;;
+;139;Plane F16 BLK52 2xFuel;1481;;
+;197;Plane F15E EX Base ;1481;;
+;198;Plane F15E EX 2xFuel;1481;;
+;141;Plane F18C Base;1296;;
+;142;Plane F18C 2xFuel;1296;;
+;210;Plane F18D Base;1296;;
+;209;Plane F18D 2xFuel;1296;;
+;148;Plane F35A;1300;;
+;149;Plane F35B C;1300;;
+;150;Plane F22;1481;;
+;157;Plane SU24;1315;;
+;158;Plane SU24 2xFuel;1315;;
+;161;Plane Mig29 35;1500;;
+;162;Plane Mig29 35 1xFuel;1500;;
+;163;Plane Mig29 35 2xFuel;1500;;
+;164;Plane Mig29 35 3xFuel;1500;;
+;165;Plane Su33;1400;;
+;166;Plane YAK38;1050;;
+;167;Plane YAK130;1060;;
+;168;Plane YAK130 2xFuel;1060;;
+;169;Plane MIG31;1500;;
+;172;Plane Su30SM;1350;;
+;193;Plane A6 EA6 Intruder Prowler Base  ;1048;;
+;233;Plane Su27SM 1xFuel;1400;;
+;256;Plane L39;750;;
+;47;Plane Reaper MQ9;480;;
+;58;Plane AV8B Harrier Base ;1083;;
+;140;Plane AV8B Harrier 2xFuel;1083;;
+;70;Plane Orion;200;;
+;121;Plane RQ4 MQ4;629;;
+;128;Plane TU22M3;1050;;
+;130;Plane IL76MD;850;;
+;131;Plane A10C;706;;
+;147;Plane B1B;1130;;
+;151;Plane F117;1100;;
+;153;Plane B52H;890;;
+;29;Plane AC130;669;;
+;227;Plane C130J30;670;;
+;154;Plane C130 MC KC;670;;
+;155;Plane C17;830;;
+;159;Plane SU25;975;;
+;160;Plane SU25 2xFuel;975;;
+;170;Plane AN26;540;;
+;305;Plane AN26 Bombs;540;;
+;171;Plane Tu160;1030;;
+;174;Plane Forpost;201;;
+;175;Plane Korsar;150;;
+;176;Plane Tu95;925;;
+;196;Plane Predator MQ1;217;;
+;239;Plane GrayEagle MQ1C ;309;;
+;216;Plane AN72P;705;;
+;259;Plane C27J;602;;
+;309;Plane S70;1000;;
+;194;Plane A6 EA6 Intruder Prowler Base  1xFuel;1048;;
+;195;Plane A6 EA6 Intruder Prowler Base  2xFuel;1048;;
