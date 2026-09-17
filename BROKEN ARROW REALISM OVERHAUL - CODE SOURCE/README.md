@@ -7,7 +7,7 @@ armour, real optics and sensors, real ballistics, reworked helicopter flight and
 terrain cover, and two campaign-only divisions per side. It is not made for multiplayer and refuses
 to run when the game is started with the anti-cheat enabled.
 
-- Nexus Mods page: *(add link)*
+- Nexus Mods page: https://www.nexusmods.com/brokenarrow/mods/5
 - Discord: https://discord.gg/hNUBQhXW8Z
 - Steam: https://steamcommunity.com/profiles/76561199350352727/
 
