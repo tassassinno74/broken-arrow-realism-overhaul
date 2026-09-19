@@ -26,6 +26,50 @@
 //      launched no missile during 10 minutes of watchdog time with enemy helicopters in flight within their range, while at least 90 % of
 //      those pairs were masked. Launches are counted from the game's own missile counts of those teams (GameplayBus.GetUnitsAmmo, the
 //      read AntiHeliTouches and MunitionsAir use), every 5 s, at most 24 reads.
+//   R6 [VUE-AA] own line of sight of GUN VEHICLES (player report of 2026-09-18: "des véhicules sont derrière des forêts et ils arrivent à
+//      tirer sur des hélicoptères à l'autre bout de la carte"; his log showed 31465 shots cut for infantry and ZERO for vehicles, because
+//      only infrared missile carriers were ever queued in VueAA). A VEHICLE (never infantry) firing a machine gun or a cannon of the A1
+//      list (t.Guns: direct fire, no seeker, can target a helicopter, no air-defence bit, no RPG, no rifle) at a helicopter in flight gets
+//      range 0 when VueAA says it cannot see it. Bounds, all of them fail-open:
+//      - only beyond GunLosMinRange (600 m): closer than that the pair is not even evaluated, a crew really does see a helicopter pop up
+//        over the next hedge, and that is where the line model is least reliable (eye at 3 m, one or two pixels of forest);
+//      - guns only: a Tunguska, a Pantsir, a Tor, a 2A38 round or any other dedicated anti-air row keeps its range, whatever the terrain;
+//        a vehicle that also carries an infrared missile (Linebacker, M-SHORAD, MANPADS in an IFV) is queued ONCE, with the 600 m floor:
+//        its infrared entry used to be queued with no floor at all, and the shared verdict defeated the floor at point-blank range;
+//      - never a helicopter the mission script drives, and armed only while Missions says its script protection can be trusted (a
+//        scripted wave keeps its range: fail closed). The SHOOTER side is NOT filtered by the script (it was in the first version, and
+//        his log showed 56 of 118 ground units script-held at all times: half the enemy vehicles kept firing through the forest and the
+//        fix would not have shown). C1 and A2 must spare scripted units because they can get a scripted transport killed and freeze a
+//        blocking node; R6 only ever REMOVES fire from a gun against a helicopter the script does not hold, so it can neither stop a
+//        ground assault nor keep a mission stage from advancing;
+//      - the same map gate as R4 (VueAA.ReadyForGating), a fresh verdict for that exact pair, its own error kill-switch, and its own
+//        watchdog: vehicles kept asking for ranges, 90 % of the asks were zeroed for 10 minutes of watchdog time and not one gun round
+//        ever touched a helicopter -> R6 alone is disarmed for the battle and the ranges go back.
+//      R6 zeroes the range of a GUN, so it feeds the combat watchdog like R1 and R2.
+//   R5 [VOL-BAS] low flight must cost something (helicopter design of 2026-09-18, the three parts approved by the author). Until now a
+//      helicopter at 8 m kept the same optics, the same firing range and the same damage as at 60 m, and R3 even made it nearly immune
+//      to infrared missiles: low flight was a free shield. It now costs three things, and gives no order, no target and no altitude:
+//      - A1, damage taken: a helicopter whose MEASURED height is below 25 m takes x1.5 (below 10 m: x2) from GUNS ONLY - the machine
+//        guns and cannons of the R1 list (7.62 mm and above), direct fire, no seeker, helicopter bit and no air-defence bit. Never a
+//        missile, never an air-defence round, never a rifle, a marksman rifle or an RPG. Sixth postfix on CalculateHitDamage, in last
+//        position so the multiplier acts on the damage the other modules already settled. A helicopter the MOD itself pushed down
+//        (Esquive) keeps x1: a dive the mod ordered is not the pilot's choice, and it gets no immunity either (R3 already says so).
+//      - A2, its own firing range: a helicopter SHOOTER below 25 m fires at 3000 m at most, below 10 m at 1500 m at most (a Ka-52 at
+//        8 m used to fire its Vikhr at 9 km). Never above the game's own value, never below the row's minimum range (500 m at most for
+//        every helicopter round of this database). NEVER on a helicopter the mission script holds, and armed only while Missions says
+//        its script protection can be trusted: a scripted attack wave keeps its full range, whatever happens (fail closed). A2
+//        shortens ranges, so it feeds the combat watchdog like the gun rules, and it has its own: low helicopters asked for ranges for
+//        10 minutes of watchdog time, every one of those asks shortened, and not one helicopter missile launched -> A2 alone is
+//        disarmed for the battle and the ranges are given back.
+//      - C1, no more immunity while sitting: a helicopter whose measured height stayed below 5 m for more than 3 s (unloading, sitting
+//        at the 2.5 m cargo altitude) loses the R3 infrared immunity. R3 models "a heat seeker does not hold an aircraft lost in the
+//        relief at 10-25 m"; a machine motionless at 1-2 m in the open for several seconds is not lost in the relief, it is the
+//        easiest target there is. The 3 seconds keep a helicopter that skims a dip in the ground from losing its cover for one frame.
+//  [DEBARQUEMENT] unloading measurement, no behaviour change of its own: a lazy postfix on UnitUnloadingSystem.InternalUnload (NOT a hot
+//  path: it only runs for entities carrying an UnloadingComponent), with its own crash guard, times every unload of the battle - how long
+//  it really took, from what height and at what speed, how many cargo units came out, whether the mission script held the transport,
+//  whether an enemy infrared shooter was within range during the window C1 opens, and whether the transport kept its script route
+//  afterwards (the honest answer to "was a mission stage delayed"). The GameConfig unload settings are read and logged once per battle.
 //  The list of infrared missiles is checked against the live database: an ammunition is kept only if it can hit helicopters or aircraft,
 //  has no ground bit and no Projectile/SEAD/Cruise/Ballistic bit (missile interception is never affected) and is fire-and-forget.
 //  Safety: solo campaign only, own Harmony id, crash guard, immutable snapshots rebuilt on the main thread, one error kill-switch per rule,
@@ -62,6 +106,10 @@ using TerrainKind = Il2CppBrokenArrow.Shared.Ecs.Enums.TerrainType;
 using FowTool = Il2CppBrokenArrow.Client.Ecs.FogOfWar.VisualTools.FOWToolScript;
 using WeaponType = Il2CppBrokenArrow.DataBase.Enums.WeaponType;
 using SeekerType = Il2CppBrokenArrow.DataBase.Enums.SeekerType;
+using TrajectoryKind = Il2CppBrokenArrow.DataBase.Enums.TrajectoryType;
+using UnloadSys = Il2CppBrokenArrow.Client.Ecs.Transports.Systems.UnitUnloadingSystem;
+using CrashComp = Il2CppBrokenArrow.Client.Ecs.Navigation.Components.HelicopterCrashFlyComponent;
+using GameCfg = Il2CppBrokenArrow.Client.Ecs.Configs.GameConfig;
 using Ammo = Il2CppBrokenArrow.DataBase.Models.Ammunitions;
 using UnitsRow = Il2CppBrokenArrow.DataBase.Models.Units;
 using DbSource = Il2CppBrokenArrow.DataBase.DataBaseSourceData;
@@ -76,14 +124,17 @@ using V3 = UnityEngine.Vector3;
 
 namespace RealismOverhaul
 {
-    /// One ground shooter holding an infrared MANPADS-class missile (immutable value, read by VueAA).
+    /// One ground shooter VueAA must compute a line of sight for: an infantry team holding an infrared MANPADS-class missile (R4) or a
+    /// vehicle carrying a machine gun or a cannon that can reach a helicopter (R6). Immutable value, read by VueAA.
     internal readonly struct LosShooter
     {
         internal readonly int EntityId, Side;
         internal readonly V3 Pos;
         internal readonly bool Infantry;                             // unit Type infantry without vehicle, ship or aircraft bit (R4 applies)
-        internal readonly float Range;                               // largest LowAltRange of its infrared missiles (metres)
-        internal LosShooter(int entityId, int side, V3 pos, bool infantry, float range) { EntityId = entityId; Side = side; Pos = pos; Infantry = infantry; Range = range; }
+        internal readonly float Range;                               // largest LowAltRange of its anti-helicopter weapons (metres)
+        internal readonly float MinRange;                            // R6: below this distance the pair is not even evaluated (0 = no floor)
+        internal LosShooter(int entityId, int side, V3 pos, bool infantry, float range, float minRange = 0f)
+        { EntityId = entityId; Side = side; Pos = pos; Infantry = infantry; Range = range; MinRange = minRange; }
     }
 
     /// One helicopter of either side (immutable value, read by VueAA).
@@ -105,7 +156,7 @@ namespace RealismOverhaul
 
     static class AntiHeliPortee
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const string OptionName = "OPTION_TIR_ANTIHELICO_COURT";
         const int MaxErrors = 50;
         const float AirborneMin = 5f;                               // metres above the ground: below, a helicopter is a normal ground target
@@ -138,7 +189,33 @@ namespace RealismOverhaul
         // helicopter height over a building pixel (the height map holds the roof): nearest ring of non-building ground, as VueAA does
         const int RoofRingMax = 5, RoofSampleBudget = 120;          // rings of 1 to 5 pixels; engine samples per refresh (all helicopters)
         const float RoofReuse = 1.5f, RoofReuseAge = 10f;           // same place (metres) and age (s) to reuse the last search of a helicopter
-        const int WhyCap = 1, WhyManual = 2, WhyFloor = 3, WhyLos = 4;
+        const int WhyCap = 1, WhyManual = 2, WhyFloor = 3, WhyLos = 4, WhyLosVeh = 5;
+        // R6 [VUE-AA] own line of sight of GUN VEHICLES against a helicopter in flight (player request of 2026-09-18).
+        const float GunLosMinRange = 600f;      // closer than this the rule never applies: a crew really does see a helicopter pop up over
+                                                // the next hedge, and that is also where the line model is the least reliable (eye at 3 m,
+                                                // one or two pixels of forest). The abuse the player saw is at 1.5 to 3 km.
+        const float GunLosMaxRange = 3000f;     // pair radius cap: no gun of the anti-helicopter list reaches further than this
+        const int MaxGunShootersPerSide = 60;   // vehicles queued per side in one snapshot at most (hard ceiling on what VueAA can be asked
+                                                // to do). Per SIDE, because a single list filled side 0 first would leave side 1 with its
+                                                // full ranges on a big map: the module's rules are identical for both sides.
+        // R6 own watchdog (watchdog clock): vehicles kept asking for ranges against helicopters, nearly every ask was cut, and not one gun
+        // round ever touched a helicopter -> R6 alone is disarmed for the battle and the ranges go back.
+        const float R6Window = 600f;
+        const int R6MinCuts = 200;
+        // R5, low flight costs something. The two heights are the ones R3 already uses (25 m and 10 m): one measured height, three rules.
+        const float DamageMultLow = 1.5f;                           // A1: 10 to 25 m above the ground
+        const float DamageMultVeryLow = 2f;                         // A1: below 10 m
+        const float ShooterCapLow = 3000f;                          // A2: own firing range of a helicopter between 10 and 25 m
+        const float ShooterCapVeryLow = 1500f;                      // A2: below 10 m
+        const float LandedHold = 3f;                                // C1: seconds below AirborneMin before R3 stops covering a helicopter
+        // A2 own watchdog (game time): low helicopters kept asking for ranges, every ask was shortened, and not one helicopter missile left
+        const float A2Window = 600f;
+        const int A2MinCuts = 200;                                  // shortened asks needed in the window before the silence means anything
+        const int UnloadRing = 128;                                 // power of two: unload events kept for the main thread
+        const float UnloadGap = 3f;                                 // an unload is over when nothing came out of the transport for this long
+        const float UnloadCheck = 20f;                              // then, this much later: did the mission script take the transport in hand again?
+        const float UnloadLongAlert = 60f;                          // an unload this long is said out loud: it is the only thing that could hold a stage up
+        const int MaxUnloadLive = 64, MaxUnloadLines = 40;
         static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
         // planned anti-helicopter ranges (upper bound of the LowAltRange written by the option rows); the cap is always the row's own value
@@ -180,12 +257,16 @@ namespace RealismOverhaul
         static readonly float[] ProbeBins = { 5f, 10f, 15f, 20f, 30f, 40f, 60f, 100f };
 
         static MelonPreferences_Entry<bool> _enabled;
-        static MelonPreferences_Entry<int> _unclean, _proofConfirmed, _proofNoEffect;
+        static MelonPreferences_Entry<int> _unclean, _proofConfirmed, _proofNoEffect, _uncleanUnload;
         static MelonPreferences_Entry<string> _guardVersion;
         static HarmonyLib.Harmony _harmony;
-        static bool _patched, _refused, _everOnline, _netLogged, _sessionArmed, _battle, _impactHook, _stopByProof, _proofNotified;
+        static bool _patched, _refused, _everOnline, _netLogged, _sessionArmed, _battle, _impactHook, _stopByProof, _proofNotified, _damageHook;
         static float _nextHeli, _nextScan, _nextTables, _nextManual, _nextLos, _nextMeasure, _nextFow, _nextReport, _nextWatch, _battleStart;
-        static float _nextProbeReport, _nextGateLog;
+        static float _nextProbeReport, _nextUnloadReport, _nextGateLog;
+        // measurement only: how many low helicopters the mission script keeps out of C1 and of A2 at the last refresh. In a campaign
+        // nearly every enemy helicopter is script-held, so these two figures say what the two rules really cost each side.
+        static int _c1Spared, _a2Spared;
+        static float _heliTime = -999f;                             // dernier rafraîchissement des hélicos (vue lue par Esquive)
         static LuaMap _map;
 
         /// Latest shooters/helicopters snapshot for VueAA (null outside a solo battle).
@@ -207,6 +288,10 @@ namespace RealismOverhaul
             internal readonly Dictionary<int, float> IrRange = new();   // Ir ammunition Id -> LowAltRange (VueAA pair range)
             internal readonly Dictionary<int, float> RpgFloor = new();  // RPG ammunition Id -> lowest cap allowed
             internal readonly Dictionary<int, float> MinRange = new();  // capped ammunition Id -> MinimalRange (caps never below)
+            internal readonly Dictionary<int, float> MinAll = new();    // EVERY row with a minimum range: A2 caps a shooter, not a row
+            internal readonly HashSet<int> Guns = new();                // A1: machine guns and cannons that may hit a low helicopter harder
+            internal readonly HashSet<int> CanonsSol = new();            // R7 [VUE-SOL]: the same live filter with the target bits changed from
+                                                                         // helicopter to ground. Direct fire, no seeker, a ground target bit.
             internal IntPtr Src;
             internal bool CapsOn;                                       // real stats applied and option active
         }
@@ -218,21 +303,40 @@ namespace RealismOverhaul
         }
 
         static volatile bool _armed, _ruleCaps, _ruleFloor, _ruleLos, _ruleManual, _manualGroundLive;
+        static volatile bool _ruleLosVeh;                           // R6: own line of sight of gun vehicles against a helicopter in flight
+        static volatile bool _ruleDamage, _ruleShooter, _ruleLanded;   // R5: A1 damage, A2 own range of a low shooter, C1 sitting helicopter
         [ThreadStatic] static bool _bypass;                         // set around the module's own measurement calls: raw engine value
         static volatile int _mainThread;
         static long _validUntil;                                    // Environment.TickCount64 limit of the current snapshots
         static volatile HashSet<int> _helisAir = new();             // EntityIds of helicopters at least AirborneMin above the ground (or height unreadable)
         static volatile HashSet<int> _helisLow = new();             // EntityIds of helicopters whose height is known and below LowFlightFloor
         static volatile HashSet<int> _helisVeryLow = new();         // subset of _helisLow: height known and below VehicleLowFlightFloor
+        static volatile HashSet<int> _helisPoses = new();           // C1: height known and below AirborneMin for more than LandedHold seconds
+        static volatile HashSet<int> _tireursBas = new();           // A2: helicopter shooters 10 to 25 m above the ground, free of the mission script
+        static volatile HashSet<int> _tireursTresBas = new();       // A2: the same below 10 m
         static volatile HashSet<long> _lowClose = new();            // (infantry shooter EntityId << 32 | helicopter EntityId): enemy helicopter in flight
                                                                     // below LowFlightFloor within LowFlightCloseRange of that team (built every 0.5 s)
+        static volatile HashSet<int> _losVehicles = new();          // R6: EntityIds of the gun vehicles queued in the last LosSnapshot (never
+                                                                    // infantry, never a vehicle the mission script holds); rebuilt every 0.5 s
+        static volatile HashSet<int> _helisLibres = new();          // R6: helicopters the mission script does not hold (empty while the script
+                                                                    // view cannot be trusted: a scripted wave is never gated)
         static volatile UnitSnap _units = new();
         static volatile Tables _tables;
         static volatile ManualTables _manual;
         static long _calls, _offMain, _stale, _heliCalls, _fromGround, _fromAir, _fromOther, _changed, _impacts;
+        // R7 [VUE-SOL] counts its own cuts here and NOWHERE else. It must never feed _changed: that counter is the combat watchdog's
+        // proof that THIS module's rules really acted, and it is read twice - to trip on a silence (Watch, "changesSince") and to
+        // confirm the re-test. A ground rule cutting freely would hand the watchdog that proof whatever the helicopter rules did, and
+        // a confirmed re-test writes a proof that blocks them for good after two battles. The two ledgers stay apart.
+        static long _changedSol;
         static long _cutCaps, _cutManualHeli, _cutManualGround, _cutFloor, _cutLos, _losWould, _losVehicle, _irCalls;
+        static long _cutLosVeh, _losVehWould, _losVehAsks, _gunHitsHeli;   // R6: cuts, cuts it would have made in measuring mode, asks seen, gun hits landed on a helicopter
         static long _closeAllowed, _closeNoVerdict;                 // R3 infantry: low helicopter close enough, left to R4 / close but no enforced fresh verdict
-        static long _errCore, _errCaps, _errManual, _errFloor, _errLos;
+        static long _floorModDown;                                  // R3 : hélico mis en vol bas par le mod, la règle ne lui donne aucune immunité
+        static long _floorPose;                                     // C1 : hélico posé depuis plus de 3 s, la règle ne le couvre plus
+        static long _dmgCalls, _dmgLow, _dmgVeryLow, _dmgModDown;   // A1: gun hits on a low helicopter, by band and left alone
+        static long _cutShooter, _cutShooterVeryLow, _shooterAsks;  // A2: ranges shortened by band, and asks seen from a low helicopter
+        static long _errCore, _errCaps, _errManual, _errFloor, _errLos, _errDamage, _errShooter, _errLosVeh;
         static readonly long[] _ring = new long[RingSize];          // samples: Id << 40 | original dm << 20 | returned dm
         static long _ringSeq;
 
@@ -244,8 +348,14 @@ namespace RealismOverhaul
             public V3 Pos, PrevPos;
             public bool PosOk, HeightKnown, Airborne, PrevOk, IrInfantry;
             public float Height, IrRange, PrevTime, NextProbe;
+            public float GunRange;                                   // R6: largest LowAltRange of its anti-helicopter guns (0 = none, vehicles only)
             public V3 RoofPos;                                       // last ground-under-building search of this helicopter
             public float RoofGround = float.NaN, RoofTime;
+            public float SousDepuis = -1f;                           // C1: since when this helicopter has been below AirborneMin without a break (-1: it is not)
+            public V3 PosAvant; public float TempsAvant = -1f;       // position and time of the previous 0.25 s refresh (speed of the unloading measurement)
+            public float Vitesse = -1f;                              // metres per second of the last refresh (-1: not measured yet)
+            public bool Crash;                                       // helicopter going down: left out of every R5 set
+            public bool Libre;                                       // A2: the mission script does not hold it (only meaningful while _scriptSur is true)
         }
         sealed class Agg { public long N, Capped; public float MaxOrig, Cap, MaxFree; }
         sealed class ProbeAgg { public long N; public double Sum, Min = double.MaxValue, Max; }
@@ -254,9 +364,13 @@ namespace RealismOverhaul
         static readonly List<Unit> _lowHelisTmp = new();            // PublishLos scratch list (main thread only)
         static List<Unit>[] _groundBySide = { new(), new() };
         static List<Unit> _gateShooters = new();
+        static List<Unit> _gunShooters = new();                     // R6: gun vehicles of the last scan (kept apart from _gateShooters, which
+                                                                    // every other rule reads as "carries an infrared anti-air missile")
         static readonly float[] _posTime = new float[2];
         static readonly Dictionary<int, int> _typeByUid = new(), _typeByUnitId = new(), _unitIdByUid = new(), _roleByUid = new();
         static readonly Dictionary<int, float> _irRangeByUnitId = new();
+        static readonly Dictionary<int, float> _gunRangeByUnitId = new();   // R6: unit type -> largest anti-helicopter gun range (cached per database)
+        static readonly Dictionary<int, float> _solRangeByUnitId = new();   // R7 [VUE-SOL]: unit type -> largest GROUND range of its direct-fire gun rounds
         static readonly Dictionary<int, Agg> _agg = new();
         static readonly Dictionary<string, int> _patterns = new();
         static readonly Dictionary<int, (string key, float time)> _lastMeasure = new();
@@ -265,7 +379,8 @@ namespace RealismOverhaul
         static Dictionary<int, int[]> _ammoByUnitId;                // WeaponAmmunitions join, per database
         static IntPtr _joinSrc;
         static DbSource _tablesSrc;                                 // held reference: its address cannot be reused while held
-        static string _capsLine, _lastSig, _irLine, _rpgLine, _minLine, _manualLine, _gateReason, _lastRuleSig, _lastProbe;
+        static string _capsLine, _lastSig, _irLine, _rpgLine, _minLine, _manualLine, _gateReason, _lastProbe, _gunLine, _lastDeb;
+        static int _lastRuleBits = -1;                              // rule states packed as bits: no string is built in the tick
         static long _drained, _lostSamples;
         static int _landed, _unknownType, _scanErrors, _measureLines, _measureTurn, _probeFails, _patternTotal, _affutsErrors;
         static bool _terrainBroken, _altBroken, _typeHelperBroken, _fowDone, _optionOffLogged, _notAppliedLogged, _killLogged, _affutsBroken, _lastCopiesProven;
@@ -310,10 +425,41 @@ namespace RealismOverhaul
         static long _probeUnknown;
         static string _constLine;
         static float _probeMid = 24f;
+        // R5 (main thread)
+        static bool _scriptSur, _crashLisible = true;                // Missions can be trusted about the script / the crash flag is readable
+        static int _crashErrors;
+        static float _a2Base = -1f;                                  // watchdog clock at the start of the current A2 window
+        static long _a2CutsAtBase, _a2AsksAtBase, _a2LaunchesAtBase;
+        static bool _a2Off, _a2NoCounter;                            // A2 disarmed for the battle by its own watchdog / no launch counter available
+        // R6 own watchdog (main thread), same shape as A2's
+        static float _r6Base = -1f;                                  // watchdog clock at the start of the current R6 window
+        static long _r6CutsAtBase, _r6AsksAtBase, _r6HitsAtBase;
+        static bool _r6Off, _r6NoCounter;                            // R6 disarmed for the battle by its own watchdog / no gun-hit counter available
+        // unloading measurement (main thread), fed by the hook ring
+        sealed class Debarq
+        {
+            public int Eid, Uid, Side, UnitId, Sorties;
+            public bool Helico, Script, SousCinq, MenaceVue, TrajetAvant, Verifie;
+            public float Debut, Dernier, HauteurMin = float.MaxValue, HauteurMax, HauteurSomme, VitesseSomme, MenaceDist = float.MaxValue, ResteAvant, ProchaineMenace;
+            public int Releves;
+            public string Nom;
+        }
+        static readonly long[] _unloadRing = new long[UnloadRing];
+        static readonly int[] _unloadSeq = new int[UnloadRing];
+        static int _unloadWrite, _unloadRead;
+        static long _unloadHookCalls, _unloadHookOffMain, _unloadHookErrors, _unloadLost;
+        static readonly Dictionary<int, Debarq> _debarqLive = new();
+        static readonly List<Debarq> _debarqDone = new();
+        static int _debarqHelis, _debarqSol, _debarqSortiesHeli, _debarqSortiesSol, _debarqScript, _debarqExposes, _debarqMenaces;
+        static int _debarqSuite, _debarqSansSuite, _debarqOuverts, _debarqLignes, _debarqLongs;
+        static float _debarqDureeHeli, _debarqDureeSol, _debarqPlusLong;
+        static string _debarqPlusLongNom;
+        static bool _unloadPatched, _unloadRefused, _unloadArmed, _unloadCfgLogged;
 
         static void Log(string s) => Mod.Log.Msg("[ANTIHELICO] " + s);
         static void LogLow(string s) => Mod.Log.Msg("[VOL-BAS] " + s);
         static void LogLos(string s) => Mod.Log.Msg("[VUE-AA] " + s);
+        static void LogDeb(string s) => Mod.Log.Msg("[DEBARQUEMENT] " + s);
 
         internal static void CreatePrefs()
         {
@@ -323,7 +469,8 @@ namespace RealismOverhaul
             _guardVersion = c.CreateEntry("VersionSecurite", "", description: Build.Desc("Sécurité automatique, ne pas modifier"));
             _proofConfirmed = c.CreateEntry("CoupuresConfirmees", 0, description: Build.Desc("Sécurité automatique (batailles où les règles remises à l'essai ont de nouveau arrêté tous les tirs), ne pas modifier"));
             _proofNoEffect = c.CreateEntry("CoupuresSansEffet", 0, description: Build.Desc("Sécurité automatique (coupures des règles sans reprise des tirs), ne pas modifier"));
-            if (_guardVersion.Value != GuardVersion) { _guardVersion.Value = GuardVersion; _unclean.Value = 0; _proofConfirmed.Value = 0; _proofNoEffect.Value = 0; }
+            _uncleanUnload = c.CreateEntry("ObservationDebarquementInterrompue", 0, description: Build.Desc("Sécurité automatique, ne pas modifier"));
+            if (_guardVersion.Value != GuardVersion) { _guardVersion.Value = GuardVersion; _unclean.Value = 0; _proofConfirmed.Value = 0; _proofNoEffect.Value = 0; _uncleanUnload.Value = 0; }
             _mainThread = Environment.CurrentManagedThreadId;
         }
 
@@ -338,7 +485,9 @@ namespace RealismOverhaul
         static void EndBattle(string why)
         {
             _armed = false;
-            _ruleCaps = _ruleFloor = _ruleLos = _ruleManual = _manualGroundLive = false;
+            _ruleCaps = _ruleFloor = _ruleLos = _ruleManual = _manualGroundLive = _ruleLosVeh = false;
+            _ruleDamage = _ruleShooter = _ruleLanded = false;
+            _unloadArmed = false;
             Los = null;
             if (!_battle && !_sessionArmed) return;
             _battle = false;
@@ -346,13 +495,17 @@ namespace RealismOverhaul
             if (_sessionArmed)
             {
                 _sessionArmed = false;
-                try { Drain(); Report(true); ReportProbe(true); } catch { }
+                try { DrainUnload(UnityEngine.Time.realtimeSinceStartup, true); } catch { }
+                try { Drain(); Report(true); ReportProbe(true); ReportUnload(true); } catch { }
                 try { ProofAtEnd(); } catch { }
                 if (_unclean.Value != 0) _unclean.Value = 0;
+                if (_uncleanUnload.Value != 0) _uncleanUnload.Value = 0;
                 try { MelonPreferences.Save(); } catch { }
                 Log($"fin de bataille ({why})");
             }
             _helisAir = new HashSet<int>(); _helisLow = new HashSet<int>(); _helisVeryLow = new HashSet<int>(); _lowClose = new HashSet<long>();
+            _helisPoses = new HashSet<int>(); _tireursBas = new HashSet<int>(); _tireursTresBas = new HashSet<int>();
+            _losVehicles = new HashSet<int>(); _helisLibres = new HashSet<int>();
             _units = new UnitSnap();
             _tables = null; _manual = null;
             ForgetBattle();
@@ -362,20 +515,38 @@ namespace RealismOverhaul
         static void ForgetBattle()
         {
             _heliList.Clear(); _lowHelisTmp.Clear(); _groundBySide = new[] { new List<Unit>(), new List<Unit>() }; _gateShooters = new List<Unit>();
+            _gunShooters = new List<Unit>(); _gunRangeByUnitId.Clear(); _solRangeByUnitId.Clear();
             _posTime[0] = _posTime[1] = 0f;
             _typeByUid.Clear(); _typeByUnitId.Clear(); _unitIdByUid.Clear(); _roleByUid.Clear(); _irRangeByUnitId.Clear();
             _agg.Clear(); _patterns.Clear(); _lastMeasure.Clear(); _once.Clear(); _warnNext.Clear();
             _tablesSrc = null; _capsLine = null; _lastSig = null; _irLine = null; _rpgLine = null; _minLine = null; _manualLine = null;
-            _gateReason = null; _lastRuleSig = null; _lastProbe = null;
+            _gateReason = null; _lastRuleBits = -1; _lastProbe = null; _gunLine = null; _lastDeb = null;
             Interlocked.Exchange(ref _calls, 0); Interlocked.Exchange(ref _offMain, 0); Interlocked.Exchange(ref _stale, 0);
             Interlocked.Exchange(ref _heliCalls, 0); Interlocked.Exchange(ref _fromGround, 0); Interlocked.Exchange(ref _fromAir, 0);
             Interlocked.Exchange(ref _fromOther, 0); Interlocked.Exchange(ref _changed, 0); Interlocked.Exchange(ref _impacts, 0);
+            Interlocked.Exchange(ref _changedSol, 0);
             Interlocked.Exchange(ref _cutCaps, 0); Interlocked.Exchange(ref _cutManualHeli, 0); Interlocked.Exchange(ref _cutManualGround, 0);
             Interlocked.Exchange(ref _cutFloor, 0); Interlocked.Exchange(ref _cutLos, 0); Interlocked.Exchange(ref _losWould, 0); Interlocked.Exchange(ref _losVehicle, 0); Interlocked.Exchange(ref _irCalls, 0);
             Interlocked.Exchange(ref _closeAllowed, 0); Interlocked.Exchange(ref _closeNoVerdict, 0);
+            Interlocked.Exchange(ref _floorModDown, 0); Interlocked.Exchange(ref _floorPose, 0);
+            Interlocked.Exchange(ref _dmgCalls, 0); Interlocked.Exchange(ref _dmgLow, 0); Interlocked.Exchange(ref _dmgVeryLow, 0); Interlocked.Exchange(ref _dmgModDown, 0);
+            Interlocked.Exchange(ref _cutShooter, 0); Interlocked.Exchange(ref _cutShooterVeryLow, 0); Interlocked.Exchange(ref _shooterAsks, 0);
             Interlocked.Exchange(ref _errCore, 0); Interlocked.Exchange(ref _errCaps, 0); Interlocked.Exchange(ref _errManual, 0);
-            Interlocked.Exchange(ref _errFloor, 0); Interlocked.Exchange(ref _errLos, 0);
+            Interlocked.Exchange(ref _errFloor, 0); Interlocked.Exchange(ref _errLos, 0); Interlocked.Exchange(ref _errLosVeh, 0);
+            Interlocked.Exchange(ref _cutLosVeh, 0); Interlocked.Exchange(ref _losVehWould, 0);
+            Interlocked.Exchange(ref _losVehAsks, 0); Interlocked.Exchange(ref _gunHitsHeli, 0);
+            _r6Base = -1f; _r6CutsAtBase = _r6AsksAtBase = _r6HitsAtBase = 0; _r6Off = false; _r6NoCounter = false;
+            Interlocked.Exchange(ref _errDamage, 0); Interlocked.Exchange(ref _errShooter, 0);
             Interlocked.Exchange(ref _ringSeq, 0);
+            _scriptSur = false; _crashLisible = true; _crashErrors = 0;
+            _a2Base = -1f; _a2CutsAtBase = _a2AsksAtBase = _a2LaunchesAtBase = 0; _a2Off = false; _a2NoCounter = false;
+            _debarqLive.Clear(); _debarqDone.Clear();
+            _debarqHelis = _debarqSol = _debarqSortiesHeli = _debarqSortiesSol = _debarqScript = _debarqExposes = _debarqMenaces = 0;
+            _debarqSuite = _debarqSansSuite = _debarqOuverts = _debarqLignes = _debarqLongs = 0;
+            _debarqDureeHeli = _debarqDureeSol = _debarqPlusLong = 0f; _debarqPlusLongNom = null;
+            _unloadRead = _unloadWrite = 0; Array.Clear(_unloadSeq, 0, _unloadSeq.Length);
+            Interlocked.Exchange(ref _unloadHookCalls, 0); Interlocked.Exchange(ref _unloadHookOffMain, 0);
+            Interlocked.Exchange(ref _unloadHookErrors, 0); _unloadLost = 0; _unloadCfgLogged = false;
             _drained = 0; _lostSamples = 0;
             _landed = _unknownType = _scanErrors = _measureLines = _measureTurn = _probeFails = _patternTotal = _affutsErrors = 0;
             _terrainBroken = _altBroken = _typeHelperBroken = _fowDone = _optionOffLogged = _notAppliedLogged = _killLogged = _affutsBroken = false;
@@ -394,10 +565,20 @@ namespace RealismOverhaul
             _roofFixed = _roofRaw = 0; _roofBridgeMask = -1; _roofMaxX = _roofMaxY = 0; _roofMap = IntPtr.Zero; _roofGridOk = _roofBroken = false;
             foreach (var p in _probe) { p.N = 0; p.Sum = 0; p.Min = double.MaxValue; p.Max = 0; }
             Array.Clear(_probeHist, 0, _probeHist.Length); _probeUnknown = 0; _constLine = null; _probeMid = 24f;
-            _nextScan = _nextTables = _nextManual = _nextLos = _nextMeasure = _nextFow = _nextReport = _nextWatch = _nextProbeReport = _nextGateLog = 0f;
+            _nextScan = _nextTables = _nextManual = _nextLos = _nextMeasure = _nextFow = _nextReport = _nextWatch = _nextProbeReport = _nextUnloadReport = _nextGateLog = 0f;
+            _heliTime = -999f;
         }
 
         static int _wait, _waitScan;
+
+        // the jobs of the 0.25 s tick, hoisted into static fields so the tick builds no capture class and no delegate (the rest of the
+        // mod does the same: Mod.cs _aSlowTick, Assistants.cs _aUnits / _aTirs / _aLogic).
+        static GameController _tGc;
+        static float _tNow;
+        static readonly Action _aHelis = () => RefreshHelis(_tGc, _tNow);
+        static readonly Action _aUnload = () => UnloadTick(_tNow);
+        static readonly Action _aProbeReport = () => ReportProbe(false);
+        static readonly Action _aUnloadReport = () => ReportUnload(false);
 
         /// Every frame in campaign; works every 0.25 s. Allocation-free gate: the closures of the tick live in Tick.
         internal static void Frame()
@@ -419,12 +600,18 @@ namespace RealismOverhaul
             var cp = gc?._GameSession_k__BackingField?.CurrentPlayer;
             if (gc == null || cp == null) { if (_battle || _sessionArmed) EndBattle("plus de partie"); return; }
             if (!Solo()) { if (_armed) { DisarmAll(); Log("partie en ligne : règles anti-hélico coupées"); } Los = null; return; }
-            if (!_battle) { _battle = true; _battleStart = now; _nextProbeReport = now + ProbeReportEvery; LogConstantsOnce(); }
+            // the two 60 s reports are deliberately half a period apart: sharing one timer put ten jobs of this module in the same
+            // frame every minute, on top of the 30 s report, and that is exactly where the measured frame spikes sit.
+            if (!_battle) { _battle = true; _battleStart = now; _nextProbeReport = now + ProbeReportEvery; _nextUnloadReport = now + ProbeReportEvery * 0.5f; LogConstantsOnce(); }
 
             // full unit scan: one heavy job per frame (Planif.cs). This gate is polled once per 0.25 s tick, not once per frame, so it
             // asks for the shortest wait: a refused scan slips one tick (0.25 s) instead of three.
             if (now >= _nextScan && Planif.Take(ref _waitScan, 1)) { _nextScan = now + ScanEvery; Safe("unités", Scan); }
-            Safe("hélicos", () => RefreshHelis(gc, now));
+            // A2 only ever spares a helicopter the script holds, so the script view must be trustworthy before it may cap anything
+            try { _scriptSur = Missions.ProtectionNotReady() == null; } catch { _scriptSur = false; }
+            _tGc = gc; _tNow = now;
+            Safe("hélicos", _aHelis);                               // hoisted closures: the 0.25 s tick allocates nothing (Mod.cs / Assistants.cs do the same)
+            _heliTime = now;
             Interlocked.Exchange(ref _validUntil, Environment.TickCount64 + StaleMs);
             if (now >= _nextTables) { _nextTables = now + TablesEvery; Safe("tables", () => BuildTables(now)); }
             if (now >= _nextManual) { _nextManual = now + ManualEvery; Safe("visée à l'œil", BuildManual); }
@@ -458,16 +645,20 @@ namespace RealismOverhaul
             if (_wdHoldPrev != 0) _wdHoldPrev &= HoldSignals();
             if (now >= _nextWatch) { _nextWatch = now + WatchEvery; Safe("chien de garde", () => Watch(now)); Safe("vue AA", () => UpdateLosGate(now)); Safe("sécurité vue AA", () => LosSafety(now)); }
             UpdateRules();
+            Safe("débarquements", _aUnload);
             if (now >= _nextMeasure) { _nextMeasure = now + MeasureEvery; Safe("mesure", () => Measure(now)); }
             if (!_fowDone && now >= _nextFow) { _nextFow = now + FowEvery; LogFowTool(now); }
             if (now >= _nextReport) { _nextReport = now + ReportEvery; Safe("relevé", () => Report(false)); }
-            if (now >= _nextProbeReport) { _nextProbeReport = now + ProbeReportEvery; Safe("sonde", () => ReportProbe(false)); }
+            if (now >= _nextProbeReport) { _nextProbeReport = now + ProbeReportEvery; Safe("sonde", _aProbeReport); }
+            if (now >= _nextUnloadReport) { _nextUnloadReport = now + ProbeReportEvery; Safe("relevé débarquements", _aUnloadReport); }
         }
 
         static void DisarmAll()
         {
             if (_armed) _armed = false;
-            _ruleCaps = _ruleFloor = _ruleLos = _ruleManual = _manualGroundLive = false;
+            _ruleCaps = _ruleFloor = _ruleLos = _ruleManual = _manualGroundLive = _ruleLosVeh = false;
+            _ruleDamage = _ruleShooter = _ruleLanded = false;
+            _unloadArmed = false;
         }
 
         static void Safe(string what, Action a)
@@ -527,10 +718,65 @@ namespace RealismOverhaul
                 }
             }
             catch (Exception e) { Log("compteur d'impacts non installé (" + e.GetBaseException().Message + ")"); }
+            // A1: sixth postfix on the damage hook, in LAST position so the multiplier acts on the value the other modules settled
+            // (CalibreMesure Priority.First, Couvert Priority.High, LeurresMesure, AntiHeliTouches, Resistance).
+            try
+            {
+                var dmg = AccessTools.Method(typeof(BSH), "CalculateHitDamage");
+                if (dmg == null) Log("calcul des dégâts introuvable dans cette version du jeu : le vol bas ne coûtera rien en dégâts");
+                else
+                {
+                    var hm = new HarmonyMethod(typeof(AntiHeliPortee).GetMethod(nameof(DamagePostfix), BindingFlags.NonPublic | BindingFlags.Static)) { priority = Priority.Last };
+                    _harmony.Patch(dmg, postfix: hm);
+                    _damageHook = true;
+                }
+            }
+            catch (Exception e) { Log("majoration des dégâts en vol bas non installée (" + e.GetBaseException().Message + ")"); }
+            TryPatchUnload();
             _armed = true;
             Log("calcul de portée surveillé (seulement raccourci, jamais allongé ; tireurs au sol, et pour les hélicos seulement la visée à l'œil des mitrailleuses de porte listées)" +
-                (_impactHook ? " ; compteur d'impacts du chien de garde installé" : " ; SANS compteur d'impacts : toutes les règles restent en mesure seule"));
+                (_impactHook ? " ; compteur d'impacts du chien de garde installé" : " ; SANS compteur d'impacts : toutes les règles restent en mesure seule") +
+                (_damageHook ? $" ; dégâts majorés contre un hélico sous {LowFlightFloor:0} m (x{DamageMultLow.ToString("0.#", Inv)}) et sous {VehicleLowFlightFloor:0} m (x{DamageMultVeryLow.ToString("0.#", Inv)}), mitrailleuses et canons seulement" : " ; SANS majoration des dégâts en vol bas"));
             return true;
+        }
+
+        /// The unloading observer: its own crash guard (two battles left in the middle with it in place and it is not installed again),
+        /// its own error kill-switch. It changes nothing: it times what the game already does.
+        static void TryPatchUnload()
+        {
+            if (_unloadPatched || _unloadRefused) return;
+            // NEVER AGAIN: UnitUnloadingSystem.InternalUnload takes "UnloadingComponent& unloadParams", a non-blittable IL2CPP struct
+            // holding references. Harmony's generated wrapper has to marshal that parameter even though this postfix does not declare
+            // it, and it throws a NullReferenceException inside the trampoline on every single unload. Seen live in RU_C01 on
+            // 2026-09-18: helicopters hovered forever without dropping their troops, the garrison stayed at 0/80 and the mission
+            // could not advance. Measuring an unload is not worth breaking one. The [DEBARQUEMENT] report simply stays empty.
+            {
+                _unloadRefused = true;
+                LogDeb("débarquements non observés : le point d'accroche du jeu ne peut pas être instrumenté sans risque (rien n'est touché, le débarquement reste celui du jeu)");
+                return;
+            }
+#pragma warning disable 0162
+            if (_uncleanUnload.Value >= 2)
+            {
+                _unloadRefused = true;
+                LogDeb("observation des débarquements abandonnée par sécurité (les deux dernières batailles où elle était en place ne se sont pas terminées normalement)");
+                return;
+            }
+            try
+            {
+                var m = AccessTools.Method(typeof(UnloadSys), "InternalUnload");
+                if (m == null) { _unloadRefused = true; LogDeb("débarquement introuvable dans cette version du jeu : aucune mesure"); return; }
+                try { _uncleanUnload.Value = _uncleanUnload.Value + 1; MelonPreferences.Save(); } catch { }   // on disk BEFORE the detour goes in
+                _harmony.Patch(m, postfix: new HarmonyMethod(typeof(AntiHeliPortee).GetMethod(nameof(UnloadPostfix), BindingFlags.NonPublic | BindingFlags.Static)));
+                _unloadPatched = true;
+                LogDeb("débarquements observés (durée, hauteur, vitesse, script ; aucun changement de comportement)");
+            }
+            catch (Exception e)
+            {
+                _unloadRefused = true;
+                LogDeb("observation des débarquements non installée (" + e.GetBaseException().Message + ")");
+            }
+#pragma warning restore 0162
         }
 
         // ---------------------------------------------------------------- hooks (plain reads of immutable snapshots, counters)
@@ -557,12 +803,27 @@ namespace RealismOverhaul
                 heliLow = _helisLow.Contains(target);
                 shooter = shooterUnitEntity.EntityId;
                 units = _units;
+                // A2: a helicopter flying low sees the hedge in front of it, not 9 km of ground. Its OWN firing range is capped,
+                // whatever it shoots at, so this must come before the early return for a real ground target below. The two sets only
+                // ever hold helicopters the mission script does not hold (built on the main thread): a scripted wave keeps its range.
+                if (_ruleShooter) ShooterLow(shooter, ammoInfo.Id, ref __result);
                 if (!heliAir)
                 {
                     // R2 against ground targets; a helicopter with a known height below AirborneMin (in _helisLow but not in _helisAir)
                     // is a normal ground target and gets the same ground cap
                     if (_manualGroundLive && units.ManualShooters.Contains(shooter) && (heliLow || units.Ground.Contains(target)))
                         GroundManual(units, shooter, ammoInfo.Id, ref __result);
+                    // R7 [VUE-SOL]: own line of sight between two GROUND units (player report of 2026-09-19, "les unités voient de loin
+                    // à travers 10 forêts"). The rule lives in VueSol.cs; all that happens on this path is one volatile bool, two set
+                    // tests this method already holds, and - only for a shooter the ground pass really queued - the rest of its ladder.
+                    // The ammunition is read only for those, so the 1.69 million ground calls of a battle never pay for it.
+                    // A helicopter below 5 m stays a matter for the helicopter rules above.
+                    // Its cuts go to _changedSol, NOT to _changed: the combat watchdog below must never be told that the helicopter
+                    // rules acted because the ground rule did. R7 has its own watchdog (VueSol.ChienDeGarde) and stops with this
+                    // module anyway through ReglesBloquees, so nothing is left unwatched.
+                    if (VueSol.Actif && !heliLow && VueSol.Candidat(shooter, target, units.Ground.Contains(shooter), units.Ground.Contains(target))
+                        && VueSol.Coupe(shooter, target, ammoInfo.Id, ref __result))
+                        Interlocked.Increment(ref _changedSol);
                     if (!heliLow) return;                                               // real ground target: done
                     // landed helicopter: continue so R3 (infrared missile against a low helicopter) still applies
                 }
@@ -599,7 +860,14 @@ namespace RealismOverhaul
                 bool cut = true;
                 try
                 {
-                    if (units.IrInfantry.Contains(shooter))
+                    // C1 : un hélico posé (sous 5 m depuis plus de 3 s : débarquement, stationnaire au ras du sol) n'est plus noyé dans
+                    // le relief, il est la cible la plus facile qui soit. La règle du vol bas n'a jamais eu vocation à le couvrir.
+                    // JAMAIS un hélico tenu par le script de mission : l'ensemble est construit sans eux (RefreshHelis).
+                    if (_ruleLanded && _helisPoses.Contains(target)) { cut = false; Interlocked.Increment(ref _floorPose); }
+                    // un hélico que le MOD vient de faire descendre ne gagne aucune immunité : sinon le vol bas décidé par le mod
+                    // rendrait les hélicos de l'IA intouchables par toute la DCA à missiles infrarouges
+                    else if (Esquive.DescenduParLeMod(target)) { cut = false; Interlocked.Increment(ref _floorModDown); }
+                    else if (units.IrInfantry.Contains(shooter))
                     {
                         long ck = ((long)shooter << 32) | (uint)target;
                         if (heliAir && _lowClose.Contains(ck))
@@ -627,6 +895,31 @@ namespace RealismOverhaul
                     }
                 }
                 catch { if (Interlocked.Increment(ref _errLos) > MaxErrors) _ruleLos = false; }
+            }
+            // R6: own line of sight of a GUN VEHICLE. The first test is the eligible-shooter set, which is empty for every infantry team
+            // and for every vehicle with no gun reaching past the floor, so nearly every call leaves here after one lookup. Machine guns
+            // and cannons only (t.Guns, the same live table A1 uses): a dedicated anti-air round is never in it, so radar air defence
+            // keeps its range. The script protection is on the TARGET side (_helisLibres): a scripted helicopter wave is never gated.
+            if (why == 0 && !ir && heliAir && _losVehicles.Contains(shooter))
+            {
+                try
+                {
+                    // the ask counter is the DENOMINATOR of R6's own watchdog, so it must count only the asks R6 could really have cut:
+                    // a machine gun or a cannon of the list against a helicopter the script does not hold. Counting the vehicle's ATGM,
+                    // its smoke and its rifle rounds too kept the cut share far below 90 % and the watchdog could never trip (the same
+                    // failure A2's comment already describes).
+                    if (t.Guns.Contains(id) && _helisLibres.Contains(target))
+                    {
+                        Interlocked.Increment(ref _losVehAsks);
+                        // MaskedFromLos: only verdicts built from this module's own snapshot honour the 600 m floor
+                        if (VueAA.MaskedFresh && VueAA.MaskedFromLos && VueAA.Masked.Contains(((long)shooter << 32) | (uint)target))
+                        {
+                            if (_ruleLosVeh) { res = 0f; why = WhyLosVeh; }
+                            else Interlocked.Increment(ref _losVehWould);
+                        }
+                    }
+                }
+                catch { if (Interlocked.Increment(ref _errLosVeh) > MaxErrors) _ruleLosVeh = false; }
             }
             // R1 + R2: caps against a helicopter in flight (never on air-defence rows)
             if (why == 0 && !ir && heliAir)
@@ -671,13 +964,16 @@ namespace RealismOverhaul
                     __result = res;
                     // only the gun rules feed the combat watchdog: the infrared-only cuts (low flight, own line of sight) are intended
                     // and cannot silence every weapon
-                    if (why == WhyCap || why == WhyManual) Interlocked.Increment(ref _changed);
+                    // R6 zeroes the range of a GUN, so it is a gun rule: it feeds the combat watchdog like R1 and R2. It cannot silence
+                    // ground combat by itself (it only ever looks at a helicopter in flight), but the mod never gives a range cut a free pass.
+                    if (why == WhyCap || why == WhyManual || why == WhyLosVeh) Interlocked.Increment(ref _changed);
                     switch (why)
                     {
                         case WhyCap: Interlocked.Increment(ref _cutCaps); break;
                         case WhyManual: Interlocked.Increment(ref _cutManualHeli); break;
                         case WhyFloor: Interlocked.Increment(ref _cutFloor); break;
                         case WhyLos: Interlocked.Increment(ref _cutLos); break;
+                        case WhyLosVeh: Interlocked.Increment(ref _cutLosVeh); break;
                     }
                 }
                 if (heliAir)
@@ -687,6 +983,86 @@ namespace RealismOverhaul
                 }
             }
             catch { if (Interlocked.Increment(ref _errCore) > MaxErrors) _armed = false; }
+        }
+
+        /// A2, hot path: own firing range of a helicopter flying low. 3000 m between 10 and 25 m above the ground, 1500 m below 10 m.
+        /// Never longer than the value the game gave, never below the row's own minimum range (500 m at most in this database, so the
+        /// cap never keeps a helicopter weapon from firing). Only the two sets decide: they hold no helicopter the script holds, none
+        /// whose height is unreadable, none going down, and they are empty while Missions cannot be trusted about the script.
+        static void ShooterLow(int shooter, int id, ref float result)
+        {
+            try
+            {
+                bool veryLow = _tireursTresBas.Contains(shooter);
+                if (!veryLow && !_tireursBas.Contains(shooter)) return;
+                Interlocked.Increment(ref _shooterAsks);
+                float cap = veryLow ? ShooterCapVeryLow : ShooterCapLow;
+                var t = _tables;
+                if (t != null && t.MinAll.TryGetValue(id, out float min) && cap < min) cap = min;
+                if (!(result > cap)) return;
+                result = cap;
+                Interlocked.Increment(ref _changed);                                        // A2 shortens ranges: the combat watchdog must see it
+                if (veryLow) Interlocked.Increment(ref _cutShooterVeryLow); else Interlocked.Increment(ref _cutShooter);
+            }
+            catch { if (Interlocked.Increment(ref _errShooter) > MaxErrors) _ruleShooter = false; }
+        }
+
+        /// A1, hot path, any thread: static Single CalculateHitDamage(Entity target, Single baseDamage, Ammunitions ammoInfo,
+        /// Single penetration, Boolean forceTopArmorAttack, ArmorSides armorSide). Last postfix of the chain: the multiplier acts on
+        /// the damage the other modules already settled. Machine guns and cannons only (t.Guns), against a helicopter whose measured
+        /// height is below 25 m. A raised damage figure cannot silence a weapon, so it never feeds the combat watchdog.
+        static void DamagePostfix(EcsEntity target, Ammo ammoInfo, ref float __result)
+        {
+            if (Campaign.MissionInerte) return;                                             // mission without the mod: vanilla damage
+            // R7 [VUE-SOL]: a unit taking a round right now is visibly in the open, and the direct-fire gun rounds landing on the
+            // ground are the denominator of R7's own watchdog. Both are fed HERE, before A1's own gate, so they keep working while
+            // A1 is only measuring. Ring write and counters only; the damage is not touched.
+            if (VueSol.Actif && __result > 0f && ammoInfo != null)
+            {
+                int te = target.EntityId;
+                var us = _units;
+                VueSol.NoteTouche(te, ammoInfo.Id, us != null && us.Ground.Contains(te));
+            }
+            if (!_ruleDamage) return;
+            try
+            {
+                if (!(__result > 0f) || ammoInfo == null) return;
+                if (Environment.TickCount64 > Interlocked.Read(ref _validUntil)) return;     // snapshots too old: nothing is changed
+                int eid = target.EntityId;
+                // the same single lookup as before, on the set of helicopters IN FLIGHT: a gun round landing on one of them is what
+                // R6's own watchdog watches (it proves the vehicles are not blind everywhere). Below, the A1 rule itself is unchanged.
+                bool low = _helisLow.Contains(eid);
+                if (!low && !_helisAir.Contains(eid)) return;
+                var t = _tables;
+                if (t == null || !t.Guns.Contains(ammoInfo.Id)) return;
+                Interlocked.Increment(ref _gunHitsHeli);
+                if (!low) return;                                                       // in flight but not low: A1 does not apply, only the counter
+                Interlocked.Increment(ref _dmgCalls);
+                // a helicopter the MOD itself pushed down did not choose to fly low: it is hit exactly as if it were still high.
+                // It gets no shield either (R3 already leaves it exposed): the mod's own dive changes nothing, in either direction.
+                if (Esquive.DescenduParLeMod(eid)) { Interlocked.Increment(ref _dmgModDown); return; }
+                if (_helisVeryLow.Contains(eid)) { __result *= DamageMultVeryLow; Interlocked.Increment(ref _dmgVeryLow); }
+                else { __result *= DamageMultLow; Interlocked.Increment(ref _dmgLow); }
+            }
+            catch { if (Interlocked.Increment(ref _errDamage) > MaxErrors) _ruleDamage = false; }   // repeated errors: back to vanilla damage
+        }
+
+        /// The unloading observer, any thread: two entity ids into a fixed ring, nothing else. Not a hot path (the game only calls it
+        /// for an entity carrying an UnloadingComponent), but it follows the same rules: no allocation, no Unity call, no logging.
+        static void UnloadPostfix(ref EcsEntity cargoEntity, ref EcsEntity containerEntity)
+        {
+            if (Campaign.MissionInerte || !_unloadArmed) return;
+            try
+            {
+                Interlocked.Increment(ref _unloadHookCalls);
+                if (Environment.CurrentManagedThreadId != _mainThread) Interlocked.Increment(ref _unloadHookOffMain);
+                int n = Interlocked.Increment(ref _unloadWrite);
+                int w = n & (UnloadRing - 1);
+                _unloadSeq[w] = 0;                                                           // slot being written
+                _unloadRing[w] = ((long)containerEntity.EntityId << 32) | (uint)cargoEntity.EntityId;
+                Volatile.Write(ref _unloadSeq[w], n);                                        // written last: the slot is complete
+            }
+            catch { if (Interlocked.Increment(ref _unloadHookErrors) > MaxErrors) _unloadArmed = false; }
         }
 
         /// R2 for an air shooter (listed helicopter door gun) against a helicopter in flight. Hot path.
@@ -751,20 +1127,105 @@ namespace RealismOverhaul
             bool floor = !block && t != null && t.Ir.Count > 0 && Interlocked.Read(ref _errFloor) <= MaxErrors;
             bool manual = !block && m != null && (m.Heli.Count + m.Ground.Count) > 0 && Interlocked.Read(ref _errManual) <= MaxErrors;
             bool los = !block && t != null && t.Ir.Count > 0 && _losGate && Interlocked.Read(ref _errLos) <= MaxErrors;
-            _ruleCaps = caps; _ruleFloor = floor; _ruleManual = manual; _ruleLos = los;
+            // R6: same map gate as R4, plus a trustworthy script view (a scripted wave is never gated) and its own watchdog.
+            bool losVeh = !block && !_r6Off && t != null && t.Guns.Count > 0 && _losGate && _scriptSur
+                          && Interlocked.Read(ref _errLosVeh) <= MaxErrors;
+            _ruleCaps = caps; _ruleFloor = floor; _ruleManual = manual; _ruleLos = los; _ruleLosVeh = losVeh;
             _manualGroundLive = manual && m.GroundOn && m.Ground.Count > 0;
             _armed = _patched && Interlocked.Read(ref _errCore) <= MaxErrors;
+            // R5. A1 (damage) and C1 (sitting helicopter) cannot silence a weapon, so the combat watchdog does not block them; they
+            // still stop with the proof stage and their own error counters. A2 shortens ranges: it is blocked like the gun rules, it
+            // needs a script view it can trust (fail closed), and its own watchdog may disarm it alone for the battle.
+            bool blockR5 = _stopByProof || !_impactHook;
+            bool damage = !blockR5 && _damageHook && t != null && t.Guns.Count > 0 && Interlocked.Read(ref _errDamage) <= MaxErrors;
+            // C1 follows the combat watchdog too: once it has told the player every rule is off for the battle, the sitting
+            // helicopter gets its infrared shield back like everything else. A raised damage figure (A1) cannot silence a weapon,
+            // so it keeps the design's own exemption.
+            bool landed = !block && t != null && t.Ir.Count > 0 && Interlocked.Read(ref _errFloor) <= MaxErrors;
+            bool shooter = !block && !_a2Off && _scriptSur && Interlocked.Read(ref _errShooter) <= MaxErrors;
+            _ruleDamage = damage; _ruleLanded = landed; _ruleShooter = shooter;
+            _unloadArmed = _unloadPatched && Interlocked.Read(ref _unloadHookErrors) <= MaxErrors;
+            WatchA2();
+            WatchR6();
 
-            string sig = $"{caps}|{floor}|{manual}|{_manualGroundLive}|{los}|{block}|{_armed}";
-            if (sig == _lastRuleSig) return;
-            _lastRuleSig = sig;
+            // eleven booleans in eleven bits instead of a fresh string every 0.25 s: the tick allocates nothing at all
+            int bits = (caps ? 1 : 0) | (floor ? 2 : 0) | (manual ? 4 : 0) | (_manualGroundLive ? 8 : 0) | (los ? 16 : 0)
+                     | (block ? 32 : 0) | (_armed ? 64 : 0) | (damage ? 128 : 0) | (landed ? 256 : 0) | (shooter ? 512 : 0)
+                     | (losVeh ? 1024 : 0);
+            if (bits == _lastRuleBits) return;
+            _lastRuleBits = bits;
             string why = _wdTripped ? "chien de garde" : _stopByProof ? "preuve de coupure (batailles précédentes)" : !_impactHook ? "pas de compteur d'impacts" : null;
             Log($"règles : portée anti-hélico des fiches {State(caps, why ?? (t == null ? "base pas lue" : !t.CapsOn ? "vraies stats absentes ou option coupée" : Interlocked.Read(ref _errCaps) > MaxErrors ? "trop d'erreurs" : "aucune munition"))}" +
                 $", visée à l'œil contre hélicos {State(manual, why ?? (m == null ? "Affuts pas encore lu" : Interlocked.Read(ref _errManual) > MaxErrors ? "trop d'erreurs" : "aucun plafond"))}" +
                 $" et contre le sol {State(_manualGroundLive, why ?? (m == null ? "Affuts pas encore lu" : "aucun plafond"))}" +
                 $" ; [VOL-BAS] missiles infrarouges sous {LowFlightFloor:0} m pour l'infanterie (sauf à moins de {LowFlightCloseRange:0} m avec vue propre vérifiée) et sous {VehicleLowFlightFloor:0} m pour les véhicules {State(floor, why ?? (t == null ? "base pas lue" : Interlocked.Read(ref _errFloor) > MaxErrors ? "trop d'erreurs" : "aucun missile retenu"))}" +
-                $" ; [VUE-AA] vue propre de l'infanterie {State(los, why ?? (t == null ? "base pas lue" : t.Ir.Count == 0 ? "aucun missile retenu" : Interlocked.Read(ref _errLos) > MaxErrors ? "trop d'erreurs" : _gateReason ?? "en attente"))} (véhicules jamais bloqués par cette règle)");
+                $" ; [VUE-AA] vue propre de l'infanterie {State(los, why ?? (t == null ? "base pas lue" : t.Ir.Count == 0 ? "aucun missile retenu" : Interlocked.Read(ref _errLos) > MaxErrors ? "trop d'erreurs" : _gateReason ?? "en attente"))}" +
+                $" ; [VUE-AA] vue propre des véhicules à mitrailleuse ou canon au-delà de {GunLosMinRange:0} m {State(losVeh, why ?? (_r6Off ? "coupée par son propre chien de garde" : t == null ? "base pas lue" : t.Guns.Count == 0 ? "aucune munition retenue" : !_scriptSur ? "les hélicos tenus par le script ne sont pas identifiables (" + (Missions.ProtectionNotReady() ?? "?") + ")" : Interlocked.Read(ref _errLosVeh) > MaxErrors ? "trop d'erreurs" : _gateReason ?? "en attente"))}" +
+                " (jamais l'infanterie, jamais une munition anti-aérienne dédiée, jamais un hélico tenu par le script)");
+            string whyR5 = _stopByProof ? "preuve de coupure (batailles précédentes)" : !_impactHook ? "pas de compteur d'impacts" : null;
+            LogLow($"le vol bas coûte quelque chose : dégâts des mitrailleuses et canons x{DamageMultLow.ToString("0.#", Inv)} sous {LowFlightFloor:0} m et x{DamageMultVeryLow.ToString("0.#", Inv)} sous {VehicleLowFlightFloor:0} m {State(damage, whyR5 ?? (!_damageHook ? "calcul des dégâts non accroché" : t == null ? "base pas lue" : t.Guns.Count == 0 ? "aucune munition retenue" : "trop d'erreurs"))}" +
+                   $" ; portée de tir d'un hélico bas plafonnée à {ShooterCapLow:0} m sous {LowFlightFloor:0} m et {ShooterCapVeryLow:0} m sous {VehicleLowFlightFloor:0} m {State(shooter, why ?? (_a2Off ? "coupée par son propre chien de garde" : !_scriptSur ? "les hélicos tenus par le script ne sont pas identifiables (" + (Missions.ProtectionNotReady() ?? "?") + ")" : "trop d'erreurs"))} (jamais un hélico tenu par le script de mission)" +
+                   $" ; hélico posé depuis plus de {LandedHold:0} s : plus d'immunité aux missiles infrarouges {State(landed, why ?? (t == null ? "base pas lue" : t.Ir.Count == 0 ? "aucun missile retenu" : "trop d'erreurs"))} (jamais un hélico tenu par le script de mission)");
             if (!_armed && _patched && !_killLogged) { _killLogged = true; Log("trop d'erreurs dans le calcul de portée : crochet désarmé pour cette bataille"); }
+        }
+
+        /// A2's own watchdog (design rule 8): while low helicopters keep asking for firing ranges and EVERY ask is shortened for
+        /// A2Window seconds of watchdog time without a single helicopter missile leaving, A2 alone is disarmed for the battle and the
+        /// ranges go back. The launches come from Esquive's existing missile-launch observer: without it there is no watchdog, and the
+        /// log says so (A2 stays on: it never touches a helicopter the script holds, which is nearly all of them in a campaign).
+        static void WatchA2()
+        {
+            if (_a2Off || !_ruleShooter) return;
+            bool counter;
+            long launches = 0;
+            try { counter = Esquive.CompteurTirsHelicoPret; if (counter) launches = Esquive.TirsDepuisHelico; }
+            catch { counter = false; }
+            if (!counter)
+            {
+                if (!_a2NoCounter) { _a2NoCounter = true; LogLow("portée des hélicos bas : sans l'observation des départs de missiles (module Esquive), la règle n'a pas de chien de garde propre ; elle reste active, car elle ne touche jamais un hélico tenu par le script"); }
+                _a2Base = -1f;
+                return;
+            }
+            long asks = Interlocked.Read(ref _shooterAsks), cuts = Interlocked.Read(ref _cutShooter) + Interlocked.Read(ref _cutShooterVeryLow);
+            if (_a2Base < 0f) { _a2Base = _wdClock; _a2AsksAtBase = asks; _a2CutsAtBase = cuts; _a2LaunchesAtBase = launches; return; }
+            if (launches > _a2LaunchesAtBase) { _a2Base = _wdClock; _a2AsksAtBase = asks; _a2CutsAtBase = cuts; _a2LaunchesAtBase = launches; return; }
+            if (_wdClock - _a2Base < A2Window) return;
+            long windowAsks = asks - _a2AsksAtBase, windowCuts = cuts - _a2CutsAtBase;
+            // a share, not every single ask: a low helicopter also asks for its nose gun and its rockets, whose range is already under
+            // the cap and is therefore never counted as shortened. Asking for ALL of them would reset the window for ever.
+            if (windowAsks < A2MinCuts || windowCuts < (long)(SafetyMaskedShare * windowAsks)) { _a2Base = _wdClock; _a2AsksAtBase = asks; _a2CutsAtBase = cuts; return; }
+            _a2Off = true;
+            _ruleShooter = false;
+            Mod.Log.Warning($"[VOL-BAS] portée des hélicos bas : {windowAsks} demandes de portée d'hélicos bas en {A2Window:0} s, {windowCuts} raccourcies, et pas un seul missile d'hélicoptère parti : la règle est coupée pour cette bataille et les portées sont rendues");
+            // N_HELI_PORTEE_BASSE_OFF now exists in Txt.cs in the five languages (integration of spec_helicos.md).
+            Mod.Notify(TxtKey.N_HELI_PORTEE_BASSE_OFF);
+        }
+
+        /// R6's own watchdog, built exactly like A2's: while gun vehicles keep asking for ranges against helicopters in flight and at least
+        /// SafetyMaskedShare of those asks are zeroed for R6Window seconds of watchdog time, without a single gun round touching a
+        /// helicopter, R6 alone is disarmed for the battle and the ranges go back. The hits come from the A1 damage postfix: without it
+        /// there is no counter, and the log says so (R6 stays on: it only ever looks at a helicopter in flight, so it cannot silence a
+        /// ground battle, and the mission script keeps every unit it drives out of the rule anyway).
+        static void WatchR6()
+        {
+            if (_r6Off || !_ruleLosVeh) return;
+            if (!_ruleDamage)
+            {
+                if (!_r6NoCounter) { _r6NoCounter = true; LogLos("vue propre des véhicules : sans le calcul des dégâts accroché, la règle n'a pas de chien de garde propre ; elle reste active, car elle ne touche que les tirs sur un hélico en vol et jamais une unité tenue par le script"); }
+                _r6Base = -1f;
+                return;
+            }
+            long asks = Interlocked.Read(ref _losVehAsks), cuts = Interlocked.Read(ref _cutLosVeh), hits = Interlocked.Read(ref _gunHitsHeli);
+            if (_r6Base < 0f) { _r6Base = _wdClock; _r6AsksAtBase = asks; _r6CutsAtBase = cuts; _r6HitsAtBase = hits; return; }
+            if (hits > _r6HitsAtBase) { _r6Base = _wdClock; _r6AsksAtBase = asks; _r6CutsAtBase = cuts; _r6HitsAtBase = hits; return; }
+            if (_wdClock - _r6Base < R6Window) return;
+            long windowAsks = asks - _r6AsksAtBase, windowCuts = cuts - _r6CutsAtBase;
+            if (windowCuts < R6MinCuts || windowCuts < (long)(SafetyMaskedShare * windowAsks))
+            { _r6Base = _wdClock; _r6AsksAtBase = asks; _r6CutsAtBase = cuts; return; }
+            _r6Off = true;
+            _ruleLosVeh = false;
+            Mod.Log.Warning($"[VUE-AA] vue propre des véhicules : {windowAsks} demandes de portée sur des hélicos en {R6Window:0} s, {windowCuts} refusées, et pas un seul obus ou balle arrivé sur un hélico : la règle est coupée pour cette bataille et les portées sont rendues");
+            Mod.Notify(TxtKey.N_VUE_AA_VEHICULES_OFF);              // like A2: the player is told on screen when a rule changes mid-battle
         }
 
         static string State(bool on, string reason) => on ? "ACTIVE" : $"en mesure seule ({reason})";
@@ -778,6 +1239,7 @@ namespace RealismOverhaul
             var snap = new UnitSnap();
             var bySide = new[] { new List<Unit>(), new List<Unit>() };
             var gate = new List<Unit>();
+            var guns = new List<Unit>();
             var known = new Dictionary<int, Unit>();
             foreach (var h in _heliList) known[h.Uid] = h;
             var oldGround = new Dictionary<int, Unit>();
@@ -787,6 +1249,7 @@ namespace RealismOverhaul
             int unknown = 0;
             for (int side = 0; side < 2; side++)
             {
+                int gunsThisSide = 0;                                   // R6: the cap is per side, never filled by side 0 alone
                 var units = _map.GetUnits(V3.zero, 1_000_000f, side, -1);
                 for (int i = 0; i < (units?.Length ?? 0); i++)
                 {
@@ -828,6 +1291,9 @@ namespace RealismOverhaul
                             g.IrInfantry = g.IrRange > 0f && IsInfantry(t);
                             if (g.IrRange > 0f) gate.Add(g);
                             if (g.IrInfantry) snap.IrInfantry.Add(eid);
+                            // R6: vehicles (and ships) only, never infantry. A team on foot keeps the game's behaviour with its machine gun.
+                            g.GunRange = IsInfantry(t) ? 0f : GunRangeOf(g.UnitId);
+                            if (g.GunRange > 0f && gunsThisSide < MaxGunShootersPerSide) { guns.Add(g); gunsThisSide++; }
                             bySide[side].Add(g);
                         }
                     }
@@ -837,9 +1303,98 @@ namespace RealismOverhaul
             _heliList.Clear(); _heliList.AddRange(helis);
             _groundBySide = bySide;
             _gateShooters = gate;
+            _gunShooters = guns;
             _unknownType = unknown;
             _units = snap;
         }
+
+        /// R6: largest anti-helicopter range of the machine guns and cannons of this unit type (0 = none). Same live table as A1 uses
+        /// (t.Guns: direct fire, no seeker, can target a helicopter, no air-defence bit, no RPG, no rifle), so a dedicated anti-air round
+        /// is never part of it. Capped at GunLosMaxRange. Cached per unit type, cleared with the WeaponAmmunitions join. Main thread.
+        static float GunRangeOf(int unitId)
+        {
+            var t = _tables;
+            if (t == null || t.Guns.Count == 0 || unitId <= 0) return 0f;
+            if (_gunRangeByUnitId.TryGetValue(unitId, out float r)) return r;
+            r = 0f;
+            var src = DbService._instance?.RawAccess;
+            var ammo = AmmoOfUnit(src, unitId);
+            if (ammo == null || src == null) return 0f;             // loadout not readable yet: nothing is cached, the answer is tried again
+            foreach (int aid in ammo)
+            {
+                if (!t.Guns.Contains(aid)) continue;
+                float low = 0f;
+                try { if (src.Ammunitions.TryGetById(aid, out var row) && row != null) low = row.LowAltRange; } catch { low = 0f; }
+                if (low > r) r = low;
+            }
+            if (r > GunLosMaxRange) r = GunLosMaxRange;
+            _gunRangeByUnitId[unitId] = r;
+            return r;
+        }
+
+        /// R7 [VUE-SOL]: longest GROUND range of this unit type's direct-fire gun rounds (0 = none). Same shape and same cache life as
+        /// GunRangeOf above, which R6 already uses: cleared with the WeaponAmmunitions join, with the tables and with the battle.
+        /// Main thread. It is only ever read to decide whether a shooter can reach past the rule's floor.
+        internal static float PorteeSolDe(int unitId)
+        {
+            var t = _tables;
+            if (t == null || t.CanonsSol.Count == 0 || unitId <= 0) return 0f;
+            if (_solRangeByUnitId.TryGetValue(unitId, out float r)) return r;
+            r = 0f;
+            var src = DbService._instance?.RawAccess;
+            var ammo = AmmoOfUnit(src, unitId);
+            if (ammo == null || src == null) return 0f;             // loadout not readable yet: nothing is cached, the answer is tried again
+            foreach (int aid in ammo)
+            {
+                if (!t.CanonsSol.Contains(aid)) continue;
+                float g = 0f;
+                try { if (src.Ammunitions.TryGetById(aid, out var row) && row != null) g = row.GroundRange; } catch { g = 0f; }
+                if (g > r) r = g;
+            }
+            _solRangeByUnitId[unitId] = r;
+            return r;
+        }
+
+        /// R7 [VUE-SOL]: the direct-fire gun rounds that can hit a ground unit (immutable once the tables are built, null before that).
+        internal static HashSet<int> CanonsSol => _tables?.CanonsSol;
+
+        /// R7 [VUE-SOL]: true while no rule of this module may change a range (combat watchdog tripped, proof of a cut-off recorded in
+        /// earlier battles, no impact counter, or the hook disarmed). The ground rule follows every one of them.
+        internal static bool ReglesBloquees => _wdTripped || _stopByProof || !_impactHook || !_armed;
+
+        /// R7 [VUE-SOL]: the watchdog clock (it does not advance on the end screen, in pause or at time scale 0).
+        internal static float HorlogeChienDeGarde => _wdClock;
+
+        /// R7 [VUE-SOL]: true when the damage hook is really installed. Without it the ground rule is blind twice over - it never
+        /// learns that a unit is being hit (so it cannot spare one that is visibly in the open) and its own watchdog keeps a
+        /// denominator stuck at zero, which would make it disarm on the first quiet five minutes. It may not cut without this.
+        internal static bool CrochetDegats => _damageHook;
+
+        /// R7 [VUE-SOL]: the global impact counter (every shell that lands, whatever it is and whoever it hits). Its own watchdog
+        /// uses it to tell a real battle-wide silence from a lull in direct-fire gunnery alone.
+        internal static long Impacts => Interlocked.Read(ref _impacts);
+
+        /// R7 [VUE-SOL]: the two sides had a live unit within 3 km of each other at the last watchdog tick.
+        internal static bool CampsAuContact => _lastContact;
+
+        /// R7 [VUE-SOL]: read-only view of the ground units of the last scan, exactly as Scan() and RefreshPositions() already keep
+        /// them. Nothing is scanned here and no position is read more than once a second.
+        internal static int SolCount(int side) => (uint)side < 2u ? _groundBySide[side].Count : 0;
+
+        internal static bool SolAt(int side, int i, float now, out int eid, out int uid, out int unitId, out int type, out bool posOk, out V3 pos)
+        {
+            eid = uid = unitId = type = 0; posOk = false; pos = V3.zero;
+            if ((uint)side >= 2u) return false;
+            RefreshPositions(side, now);
+            var l = _groundBySide[side];
+            if ((uint)i >= (uint)l.Count) return false;
+            var g = l[i];
+            eid = g.Eid; uid = g.Uid; unitId = g.UnitId; type = g.Type; posOk = g.PosOk; pos = g.Pos;
+            return true;
+        }
+
+        internal static bool EstInfanterie(int type) => IsInfantry(type);
+        internal static bool EstNavire(int type) => (type & TypeShip) != 0;
 
         /// Units.Type of an infantry unit: the infantry bit and no vehicle, ship or aircraft bit.
         static bool IsInfantry(int type) => (type & TypeInfantry) != 0 && (type & (TypeVehicle | TypeShip | TypeHeli | TypePlane)) == 0;
@@ -922,7 +1477,7 @@ namespace RealismOverhaul
                 _ammoByUnitId = map.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
                 _weaponAmmoByUnitId = pairs.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
                 _joinSrc = src.Pointer;
-                _irRangeByUnitId.Clear(); _groundCapByUnitId.Clear();
+                _irRangeByUnitId.Clear(); _gunRangeByUnitId.Clear(); _solRangeByUnitId.Clear(); _groundCapByUnitId.Clear();
             }
             return _ammoByUnitId.TryGetValue(unitId, out var found) ? found : null;
         }
@@ -979,7 +1534,12 @@ namespace RealismOverhaul
                 if (_helisAir.Count > 0) _helisAir = new HashSet<int>();
                 if (_helisLow.Count > 0) _helisLow = new HashSet<int>();
                 if (_helisVeryLow.Count > 0) _helisVeryLow = new HashSet<int>();
+                if (_helisPoses.Count > 0) _helisPoses = new HashSet<int>();
+                if (_tireursBas.Count > 0) _tireursBas = new HashSet<int>();
+                if (_tireursTresBas.Count > 0) _tireursTresBas = new HashSet<int>();
+                if (_helisLibres.Count > 0) _helisLibres = new HashSet<int>();
                 _landed = 0;
+                _c1Spared = _a2Spared = 0;
                 return;
             }
             MapMeta m = null;
@@ -987,30 +1547,100 @@ namespace RealismOverhaul
             var flying = new HashSet<int>();
             var low = new HashSet<int>();
             var veryLow = new HashSet<int>();
+            var poses = new HashSet<int>();
+            var basShoot = new HashSet<int>();
+            var tresBasShoot = new HashSet<int>();
+            var libres = new HashSet<int>();                         // R6: helicopters in flight the mission script does not hold
+            float gameNow = UnityEngine.Time.time;
             int landed = 0, budget = RoofSampleBudget;
+            int scriptSpared = 0, a2Spared = 0;                     // low helicopters the mission script keeps out of C1 / A2
             foreach (var h in _heliList)
             {
                 try
                 {
-                    if (!h.U.IsAlive()) { h.Airborne = false; continue; }
+                    if (!h.U.IsAlive()) { h.Airborne = false; h.SousDepuis = -1f; h.TempsAvant = -1f; continue; }
                     var p = h.U.GetPosition();
+                    if (h.TempsAvant >= 0f)
+                    {
+                        float dt = now - h.TempsAvant;
+                        if (dt > 0.01f)
+                        {
+                            float ddx = p.x - h.PosAvant.x, ddy = p.y - h.PosAvant.y, ddz = p.z - h.PosAvant.z;
+                            h.Vitesse = MathF.Sqrt(ddx * ddx + ddy * ddy + ddz * ddz) / dt;
+                        }
+                    }
+                    h.PosAvant = p; h.TempsAvant = now;
                     h.Pos = p; h.PosOk = true;
                     if (GroundHeight(m, h, p, now, ref budget, out float g))
                     {
                         h.Height = p.y - g; h.HeightKnown = true; h.Airborne = h.Height >= AirborneMin;
                         if (h.Height < LowFlightFloor) low.Add(h.Eid);
                         if (h.Height < VehicleLowFlightFloor) veryLow.Add(h.Eid);
+                        // C1: below 5 m without a break. A dip in the ground crossed at speed never reaches the 3 s.
+                        if (h.Height < AirborneMin) { if (h.SousDepuis < 0f) h.SousDepuis = now; }
+                        else h.SousDepuis = -1f;
                     }
-                    else { h.HeightKnown = false; h.Airborne = true; }                   // height unreadable: counted as flying, no low-flight rule
+                    else { h.HeightKnown = false; h.Airborne = true; h.SousDepuis = -1f; }   // height unreadable: counted as flying, no low-flight rule
+                    // the crash flag is only read for the helicopters the low-flight rules could touch: a few reads per refresh, never all of them
+                    h.Crash = h.HeightKnown && h.Height < LowFlightFloor && Crashing(h);
                     if (h.Airborne) flying.Add(h.Eid); else landed++;
+                    // C1 never touches a helicopter the mission script holds. A scripted drop-off sits at 1-2.5 m for the whole
+                    // unload and the mission waits for its squads: 720 of RU_C01's 760 order nodes are blocking and none of them
+                    // expires, so a transport shot down there freezes the branch for good. A free helicopter does lose the shield.
+                    // A2 and C1: only helicopters the mission script does not hold, and only while that answer can be trusted. The
+                    // script is asked ONCE, and only for the helicopters one of the two rules could touch: it costs nothing for the others.
+                    // A2 also spares a helicopter the MOD itself pushed down: R3 and A1 already leave that dive alone "in either
+                    // direction", so A2 must not turn the mod's own dodge into a 1500 m cap the pilot never chose.
+                    bool bas = !h.Crash && h.HeightKnown && h.Height < LowFlightFloor;
+                    bool pose = !h.Crash && h.HeightKnown && h.SousDepuis >= 0f && now - h.SousDepuis > LandedHold;
+                    // R6 needs the same answer for every helicopter IN FLIGHT, so the script is asked once and the answer is shared with
+                    // C1 and A2. Without a trustworthy script view the set stays empty: a scripted wave is never gated (fail closed).
+                    bool free = (bas || pose || (_scriptSur && h.Airborne)) && ScriptFree(h, gameNow);
+                    if (_scriptSur && h.Airborne && free) libres.Add(h.Eid);
+                    bool libreScript = (bas || pose) && free;
+                    if (pose) { if (!_scriptSur || libreScript) poses.Add(h.Eid); else scriptSpared++; }
+                    bool modDown = bas && Esquive.DescenduParLeMod(h.Eid);
+                    h.Libre = _scriptSur && bas && !modDown && libreScript;
+                    if (_scriptSur && bas && !modDown && !h.Libre) a2Spared++;   // measurement: low helicopters A2 gives back to the script
+                    if (h.Libre)
+                    {
+                        if (h.Height < VehicleLowFlightFloor) tresBasShoot.Add(h.Eid);
+                        else basShoot.Add(h.Eid);
+                    }
                     if (now >= h.NextProbe) { h.NextProbe = now + ProbeEvery; ProbeSample(h, now); }
                 }
-                catch { h.Airborne = false; h.PosOk = false; _scanErrors++; }
+                catch { h.Airborne = false; h.PosOk = false; h.SousDepuis = -1f; _scanErrors++; }
             }
             _landed = landed;
+            _c1Spared = scriptSpared; _a2Spared = a2Spared;
             _helisAir = flying;
             _helisLow = low;
             _helisVeryLow = veryLow;
+            _helisPoses = poses;                                    // one assignment each: the hook never sees a set being filled
+            _tireursBas = basShoot;
+            _tireursTresBas = tresBasShoot;
+            _helisLibres = libres;
+        }
+
+        /// True when the mission script does not hold this helicopter. Main thread; any doubt answers false (the script keeps its range).
+        static bool ScriptFree(Unit h, float gameNow)
+        {
+            try { return Missions.ScriptReason(h.Uid, gameNow) == null; }
+            catch { return false; }
+        }
+
+        /// Helicopter going down: left out of every low-flight rule (only Has&lt;T&gt; is used, never Get&lt;T&gt;). False once unreadable.
+        static bool Crashing(Unit h)
+        {
+            if (!_crashLisible) return false;
+            try { return h.U.Entity.Has<CrashComp>(); }
+            catch (Exception e)
+            {
+                if (++_crashErrors < 5) return true;                // one failed read: this helicopter is left alone this time
+                _crashLisible = false;
+                LogOnce("crash", "état d'écrasement des hélicos illisible (" + e.GetBaseException().Message + ") : ce contrôle est abandonné pour cette bataille");
+                return false;
+            }
         }
 
         static bool GroundHeight(MapMeta m, Unit h, V3 p, float now, ref int budget, out float ground)
@@ -1110,41 +1740,102 @@ namespace RealismOverhaul
             if (th < best) best = th;
         }
 
-        /// Every 0.5 s: shooters holding an infrared MANPADS-class missile and every helicopter, for VueAA.
+        /// Every 0.5 s: shooters holding an infrared MANPADS-class missile (R4), gun vehicles that can reach a helicopter (R6) and every
+        /// helicopter, for VueAA. The R6 set of eligible shooters is published here too, so the hook can only ever cut a shooter whose
+        /// pairs were really queued in the same snapshot.
         static void PublishLos(float now)
         {
             var t = _tables;
-            if (t == null || t.Ir.Count == 0) { Los = null; if (_lowClose.Count > 0) _lowClose = new HashSet<long>(); return; }
-            var shooters = new List<LosShooter>(_gateShooters.Count);
+            bool irOn = t != null && t.Ir.Count > 0;
+            // R6 has nothing to do with the infrared table: an empty Ir list used to clear _losVehicles while the log still said the
+            // vehicle rule was ACTIVE. Only leave early when NEITHER rule has anything to queue.
+            if (t == null || (!irOn && _gunShooters.Count == 0))
+            {
+                Los = null;
+                if (_lowClose.Count > 0) _lowClose = new HashSet<long>();
+                if (_losVehicles.Count > 0) _losVehicles = new HashSet<int>();
+                return;
+            }
+            // R6: gun vehicles, chosen BEFORE the infrared shooters, because a vehicle that is in both lists (Linebacker, M-SHORAD, an
+            // IFV with a MANPADS) must be queued ONCE, with the gun floor: its infrared entry carries no floor, VueAA keys a pair by
+            // entity id alone, and the hook has no distance test of its own, so a floorless entry handed R6 a verdict at 300 m and the
+            // 25 mm stopped firing at point-blank range - exactly what the 600 m floor exists to prevent.
+            // Only while the script view can be trusted (without it no helicopter is ever free and the rule cuts nothing anyway), and
+            // only while at least one helicopter is in the air: with none, VueAA builds no pair at all and reading every vehicle's
+            // position twice a second would be pure waste.
+            // While the rule is only measuring, the pairs are still queued: the log then says what it WOULD have cut. They stop being queued
+            // when VueAA says its verdicts will never drive a rule again in this battle: measuring an unusable verdict for 40 minutes is
+            // line-walking for nothing.
+            HashSet<int> vehicles = null;
+            if (_scriptSur && _gunShooters.Count > 0 && !VueAA.GateFailed && AnyHeliAirborne())
+            {
+                foreach (var g in _gunShooters)
+                {
+                    try
+                    {
+                        if (!(g.GunRange > GunLosMinRange)) continue;         // a gun that cannot reach past the floor has nothing to gate
+                        if (!g.U.IsAlive()) continue;
+                        (vehicles ??= new HashSet<int>()).Add(g.Eid);
+                    }
+                    catch { }
+                }
+            }
+            var shooters = new List<LosShooter>(_gateShooters.Count + _gunShooters.Count);
             // R3 close-range pairs: infantry teams and enemy helicopters in flight below LowFlightFloor within LowFlightCloseRange
             var lowHelis = _lowHelisTmp;
             lowHelis.Clear();
-            foreach (var h in _heliList) if (h.PosOk && h.HeightKnown && h.Airborne && h.Height < LowFlightFloor) lowHelis.Add(h);
+            if (irOn) foreach (var h in _heliList) if (h.PosOk && h.HeightKnown && h.Airborne && h.Height < LowFlightFloor) lowHelis.Add(h);
             var close = lowHelis.Count > 0 ? new HashSet<long>() : null;
             float close2 = LowFlightCloseRange * LowFlightCloseRange;
-            foreach (var g in _gateShooters)
-            {
-                try
+            if (irOn)
+                foreach (var g in _gateShooters)
                 {
-                    var p = g.U.GetPosition();
-                    bool infantry = IsInfantry(g.Type);
-                    shooters.Add(new LosShooter(g.Eid, g.Side, p, infantry, g.IrRange));
-                    if (close == null || !g.IrInfantry) continue;
-                    foreach (var h in lowHelis)
+                    try
                     {
-                        if (h.Side == g.Side) continue;
-                        float dx = h.Pos.x - p.x, dz = h.Pos.z - p.z;
-                        if (dx * dx + dz * dz <= close2) close.Add(((long)g.Eid << 32) | (uint)h.Eid);
+                        var p = g.U.GetPosition();
+                        bool infantry = IsInfantry(g.Type);
+                        // one entry per shooter: a gun vehicle that also carries an infrared missile gets the gun floor and the longer
+                        // of its two ranges, so no pair below the floor is ever evaluated and no line is walked twice
+                        bool gun = vehicles != null && !infantry && vehicles.Contains(g.Eid);
+                        float range = gun && g.GunRange > g.IrRange ? g.GunRange : g.IrRange;
+                        shooters.Add(new LosShooter(g.Eid, g.Side, p, infantry, range, gun ? GunLosMinRange : 0f));
+                        if (close == null || !g.IrInfantry) continue;
+                        foreach (var h in lowHelis)
+                        {
+                            if (h.Side == g.Side) continue;
+                            float dx = h.Pos.x - p.x, dz = h.Pos.z - p.z;
+                            if (dx * dx + dz * dz <= close2) close.Add(((long)g.Eid << 32) | (uint)h.Eid);
+                        }
                     }
+                    catch { }
                 }
-                catch { }
-            }
             lowHelis.Clear();
             if (close != null) _lowClose = close;                    // one assignment: the hook never sees a set being filled
             else if (_lowClose.Count > 0) _lowClose = new HashSet<long>();
+            if (vehicles != null)
+                foreach (var g in _gunShooters)
+                {
+                    try
+                    {
+                        if (g.IrRange > 0f) continue;                 // already published just above, with the gun floor
+                        if (!vehicles.Contains(g.Eid)) continue;
+                        shooters.Add(new LosShooter(g.Eid, g.Side, g.U.GetPosition(), false, g.GunRange, GunLosMinRange));
+                    }
+                    catch { }
+                }
+            if (vehicles != null) _losVehicles = vehicles;           // one assignment: the hook never sees a set being filled
+            else if (_losVehicles.Count > 0) _losVehicles = new HashSet<int>();
+            if (shooters.Count == 0 && !irOn) { Los = null; return; }   // nothing to queue: VueAA keeps its own fallback measurement
             var helis = new List<LosHeli>(_heliList.Count);
             foreach (var h in _heliList) if (h.PosOk) helis.Add(new LosHeli(h.Eid, h.Side, h.Pos));
             Los = new LosSnapshot(shooters.ToArray(), helis.ToArray(), now);
+        }
+
+        /// True when at least one known helicopter is in the air (flag already set by RefreshHelis 0.25 s earlier: no engine call).
+        static bool AnyHeliAirborne()
+        {
+            foreach (var h in _heliList) if (h.PosOk && h.Airborne) return true;
+            return false;
         }
 
         /// Every 5 s (the database may be replaced or the real stats applied late): caps, air-defence rows, infrared missiles, RPG floors.
@@ -1164,13 +1855,14 @@ namespace RealismOverhaul
                 if (!real && !_notAppliedLogged && now - _battleStart >= 30f) { _notAppliedLogged = true; Log("vraies stats non appliquées à la base de la mission : portée anti-hélico des fiches en mesure seule"); }
 
                 var t = new Tables { Src = src.Pointer, CapsOn = capsOn };
-                // air-defence rows (never capped) from the live bits
+                // air-defence rows (never capped) and every minimum range (A2 caps a shooter, so it may meet any row), from the live bits
                 foreach (var a in Props.Rows(src.Ammunitions.GetAll()))
                 {
                     if (a == null) continue;
                     long tt;
                     try { tt = (long)a.TargetType; } catch { continue; }
                     if ((tt & AirDefenceBits) != 0) t.NoCap.Add(a.Id);
+                    try { float mn = a.MinimalRange; if (mn > 0f) t.MinAll[a.Id] = mn; } catch { }
                 }
                 foreach (int id in DedicatedAa) t.NoCap.Add(id);
 
@@ -1252,12 +1944,42 @@ namespace RealismOverhaul
                         t.Caps[id] = Math.Max(low, min);
                     }
                 }
+                // A1: the rows that may hit a low helicopter harder. Machine guns and cannons only, from the live rows: the row can
+                // target helicopters, carries no air-defence bit, has no seeker and flies a direct shot. Rifles and marksman rifles
+                // (the 400 m and 500 m groups of the anti-helicopter list) and RPG rows are left out: the author asked for guns.
+                var handHeld = new HashSet<int>();
+                for (int gi = 0; gi < PlannedCaps.Length && PlannedCaps[gi].max <= 500f; gi++)
+                    foreach (int id in PlannedCaps[gi].ids) handHeld.Add(id);
+                foreach (var a in Props.Rows(src.Ammunitions.GetAll()))
+                {
+                    if (a == null) continue;
+                    int aid = a.Id;
+                    if (t.NoCap.Contains(aid) || t.Ir.Contains(aid) || t.RpgFloor.ContainsKey(aid) || handHeld.Contains(aid)) continue;
+                    try
+                    {
+                        long tt = (long)a.TargetType;
+                        if (a.Seeker != SeekerType.None) continue;                          // guided: never
+                        if (a.TrajectoryType != TrajectoryKind.DirectShot) continue;        // artillery, mortars, rockets, bombs: never
+                        // R7 [VUE-SOL]: the same three tests, with the target bits changed from helicopter to ground. Built here because
+                        // this is the only loop that already walks every row and it shares the four exclusion sets above (dedicated
+                        // anti-air rows, infrared missiles, RPGs, rifles and marksman rifles). Requiring DirectShot is what keeps
+                        // artillery, howitzers, mortars, MLRS, bombs AND every missile out of the ground rule, from one enum test.
+                        if ((tt & GroundBits) != 0) t.CanonsSol.Add(aid);
+                        if ((tt & 8L) == 0) continue;                                       // cannot hit a helicopter at all
+                        t.Guns.Add(aid);
+                    }
+                    catch { }
+                }
                 _tables = t;
                 _tablesSrc = src;
-                _irRangeByUnitId.Clear();
+                _irRangeByUnitId.Clear(); _gunRangeByUnitId.Clear(); _solRangeByUnitId.Clear();
                 string line = $"portées anti-hélico ({OptionName}) : {t.Caps.Count}/{total} munitions plafonnées{(capsOn ? "" : " (en mesure seule)")}, munitions anti-aériennes jamais plafonnées {t.NoCap.Count}" +
                               (skipped.Count > 0 ? $" ; ignorées (portée du jeu gardée) : {string.Join(", ", skipped)}" : " ; aucune ignorée");
                 if (line != _capsLine) { _capsLine = line; Log(line); }
+                string gunLine = $"dégâts majorés contre un hélico en vol bas : {t.Guns.Count} munitions retenues (mitrailleuses et canons à tir direct, sans autodirecteur, capables de viser un hélico et sans bit anti-aérien) ; " +
+                                 $"vue propre au sol : {t.CanonsSol.Count} munitions retenues (mêmes règles, cible au sol) ; " +
+                                 $"jamais concernés : missiles ({t.Ir.Count} infrarouges), munitions anti-aériennes ({t.NoCap.Count}), roquettes antichar ({t.RpgFloor.Count}), fusils et fusils de précision ({handHeld.Count}) ; portées minimales lues {t.MinAll.Count}";
+                if (gunLine != _gunLine) { _gunLine = gunLine; LogLow(gunLine); }
             }
             catch (Exception e) { Warn("caps", "tables des portées anti-hélico illisibles : " + e.GetBaseException().Message); }
         }
@@ -1356,8 +2078,9 @@ namespace RealismOverhaul
             if (before != _losGate)
             {
                 LogLos(_losGate
-                    ? $"règle de vue propre armée pour les équipes d'infanterie à missiles infrarouges : {reason} ; pas de tir sur un hélico caché par la forêt, un bâtiment ou le relief ; véhicules anti-aériens jamais bloqués par cette règle"
-                    : $"règle de vue propre de l'infanterie en mesure seule : {reason} ; hélicos sous {LowFlightFloor:0} m hors d'atteinte des missiles d'épaule même à moins de {LowFlightCloseRange:0} m tant que la vue n'est pas vérifiée");
+                    ? $"règles de vue propre armées : {reason} ; équipes d'infanterie à missiles infrarouges et véhicules à mitrailleuse ou canon au-delà de {GunLosMinRange:0} m ne tirent plus sur un hélico caché par la forêt, un bâtiment ou le relief ; " +
+                      $"jamais une munition anti-aérienne dédiée, jamais un hélico tenu par le script de mission, jamais l'infanterie avec ses armes à tir tendu"
+                    : $"règles de vue propre en mesure seule : {reason} ; hélicos sous {LowFlightFloor:0} m hors d'atteinte des missiles d'épaule même à moins de {LowFlightCloseRange:0} m tant que la vue n'est pas vérifiée, et les véhicules gardent la portée du jeu");
                 _nextGateLog = now + 120f;
             }
             if (_losGate) _losFailedLogged = false;
@@ -1683,7 +2406,7 @@ namespace RealismOverhaul
                 }
                 return;
             }
-            bool rulesActive = _ruleCaps || _ruleManual;                                    // only the gun rules can be blamed for a general silence
+            bool rulesActive = _ruleCaps || _ruleManual || _ruleShooter;                    // the rules that SHORTEN a range: only those can be blamed for a general silence
             if (!rulesActive || !_wdFired) return;
             float silence = g - _wdLastImpact;
             long changesSince = chg - _wdChgAtImpact;
@@ -1695,7 +2418,7 @@ namespace RealismOverhaul
             DisarmAll();
             _armed = _patched;                                                              // the hook keeps measuring
             Mod.Log.Warning($"[ANTIHELICO] chien de garde : aucun impact depuis {silence:0} s alors que les deux camps sont au contact et que les règles des armes à tir direct ont raccourci {changesSince} portées : " +
-                            $"toutes les règles anti-hélico coupées {(_wdRetestDone ? "pour cette bataille" : "(remises à l'essai une fois si les tirs reprennent vite)")} (portée des fiches {Interlocked.Read(ref _cutCaps)}, visée à l'œil {Interlocked.Read(ref _cutManualHeli)}/{Interlocked.Read(ref _cutManualGround)}, vol bas {Interlocked.Read(ref _cutFloor)}, vue propre {Interlocked.Read(ref _cutLos)})");
+                            $"toutes les règles anti-hélico coupées {(_wdRetestDone ? "pour cette bataille" : "(remises à l'essai une fois si les tirs reprennent vite)")} (portée des fiches {Interlocked.Read(ref _cutCaps)}, visée à l'œil {Interlocked.Read(ref _cutManualHeli)}/{Interlocked.Read(ref _cutManualGround)}, vol bas {Interlocked.Read(ref _cutFloor)}, vue propre {Interlocked.Read(ref _cutLos)}, portée des hélicos bas {Interlocked.Read(ref _cutShooter) + Interlocked.Read(ref _cutShooterVeryLow)})");
             Mod.Notify(TxtKey.N_AH_RULES_OFF_3MIN);
         }
 
@@ -1765,6 +2488,90 @@ namespace RealismOverhaul
             }
         }
 
+        // ---------------------------------------------------------------- vue en lecture seule des instantanés (fil principal, pour Esquive)
+        //  Rien n'est modifié ici : ce sont les listes que Scan() et RefreshHelis() tiennent déjà à jour pour les règles de portée,
+        //  rendues telles quelles pour que le module de vol bas n'ait aucun balayage d'unités à refaire de son côté.
+
+        /// Vrai quand la vue des hélicos est fraîche (bataille suivie et rafraîchissement de moins d'une seconde).
+        internal static bool VueFraiche(float now) => _battle && now - _heliTime < 1f;
+
+        /// Hauteur (m) sous laquelle la sonde compte un hélico en vol bas : moyenne des deux constantes du moteur (8 m et 40 m).
+        internal static float SeuilVolBas => _probeMid;
+
+        /// Nombre d'hélicos vivants du dernier balayage (les deux camps).
+        internal static int HeliCount => _heliList.Count;
+
+        /// Hélico numéro i du dernier balayage (faux seulement quand i sort de la liste). posOk dit si sa position a pu être lue.
+        internal static bool HeliAt(int i, out int uid, out int eid, out int side, out int unitId, out bool posOk, out bool airborne, out bool heightKnown, out float height, out V3 pos, out LuaUnit u)
+        {
+            uid = eid = unitId = 0; side = -1; posOk = airborne = heightKnown = false; height = 0f; pos = V3.zero; u = null;
+            if (i < 0 || i >= _heliList.Count) return false;
+            var h = _heliList[i];
+            uid = h.Uid; eid = h.Eid; side = h.Side; unitId = h.UnitId; u = h.U;
+            posOk = h.PosOk; airborne = h.Airborne; heightKnown = h.HeightKnown; height = h.Height; pos = h.Pos;
+            return true;
+        }
+
+        /// Unité au sol du dernier balayage portant cet identifiant d'entité (les deux camps).
+        internal static bool GroundByEid(int eid, out int uid, out int side, out float irRange)
+        {
+            uid = -1; side = -1; irRange = 0f;
+            for (int s = 0; s < 2; s++)
+            {
+                var l = _groundBySide[s];
+                for (int i = 0; i < l.Count; i++)
+                    if (l[i].Eid == eid) { uid = l[i].Uid; side = s; irRange = l[i].IrRange; return true; }
+            }
+            return false;
+        }
+
+        /// Tireur au sol encore vivant, sa position et la portée de ses missiles infrarouges (0 = aucun).
+        internal static bool ShooterState(int uid, int side, out bool alive, out V3 pos, out float irRange)
+        {
+            alive = false; pos = V3.zero; irRange = 0f;
+            if (side < 0 || side > 1) return false;
+            RefreshPositions(side, UnityEngine.Time.realtimeSinceStartup);
+            var l = _groundBySide[side];
+            for (int i = 0; i < l.Count; i++)
+            {
+                var g = l[i];
+                if (g.Uid != uid) continue;
+                try { alive = g.U.IsAlive(); } catch { alive = false; }
+                pos = g.Pos; irRange = g.IrRange;
+                return g.PosOk;
+            }
+            return false;
+        }
+
+        /// Un tireur au sol du camp d'en face portant un missile anti-aérien infrarouge à moins de radius mètres de cette position.
+        internal static bool ThreatNear(V3 pos, int heliSide, float radius, out float dist)
+        {
+            dist = float.MaxValue;
+            int enemy = 1 - heliSide;
+            if (heliSide < 0 || heliSide > 1) return false;
+            RefreshPositions(enemy, UnityEngine.Time.realtimeSinceStartup);
+            float r2 = radius * radius, best = float.MaxValue;
+            var l = _gateShooters;
+            for (int i = 0; i < l.Count; i++)
+            {
+                var g = l[i];
+                if (g.Side != enemy || !g.PosOk) continue;
+                float dx = g.Pos.x - pos.x, dz = g.Pos.z - pos.z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 <= r2 && d2 < best) best = d2;
+            }
+            if (best == float.MaxValue) return false;
+            dist = (float)Math.Sqrt(best);
+            return true;
+        }
+
+        /// Munition anti-aérienne selon la base vivante : un seul impact de ce genre suffit à faire descendre un hélico.
+        internal static bool MunitionAntiAerienne(int ammoId)
+        {
+            var t = _tables;
+            return t != null && (t.Ir.Contains(ammoId) || t.NoCap.Contains(ammoId));
+        }
+
         /// Battle end: only a failed re-test (rules put back, every weapon silent again) counts as proof against the rules (hidden preference, this version).
         static void ProofAtEnd()
         {
@@ -1811,6 +2618,14 @@ namespace RealismOverhaul
             float found = -1f;
             bool uncapped = false, conflict = false;
             bool air = u.Air.Contains(entityId);                    // helicopter door guns: the hook applies the manual-aim caps only, never R1
+            // A2: a helicopter flying low fires no further than its own cap, whatever the circle says. The stats the player sees must
+            // be the stats the rules apply, here too.
+            float self = float.MaxValue;
+            if (_ruleShooter)
+            {
+                if (_tireursTresBas.Contains(entityId)) self = ShooterCapVeryLow;
+                else if (_tireursBas.Contains(entityId)) self = ShooterCapLow;
+            }
             foreach (int aid in ammo)
             {
                 Ammo row = null;
@@ -1823,6 +2638,7 @@ namespace RealismOverhaul
                 {
                     float v = g;
                     if (!noCap && _manualGroundLive && m != null && m.Ground.TryGetValue(Key(uid, aid), out float c) && c < v) { v = Math.Max(c, t.MinRange.TryGetValue(aid, out float mr) ? mr : 0f); why = "visée à l'œil"; }
+                    if (Own(aid, ref v)) why = "vol bas";
                     Note(v);
                 }
                 if (l > 0f && Math.Abs(l - radius) <= 1f)
@@ -1834,6 +2650,7 @@ namespace RealismOverhaul
                         if (_ruleManual && m != null && m.Heli.TryGetValue(Key(uid, aid), out float c2) && c2 < v) { v = c2; why = "visée à l'œil contre hélico"; }
                         if (t.RpgFloor.TryGetValue(aid, out float f) && v < f) v = Math.Min(l, f);
                     }
+                    if (Own(aid, ref v)) why = "vol bas";
                     Note(v);
                 }
             }
@@ -1846,6 +2663,17 @@ namespace RealismOverhaul
                 if (v >= radius - 1f) { uncapped = true; return; }
                 if (found < 0f) found = v;
                 else if (Math.Abs(found - v) > 1f) conflict = true;
+            }
+
+            /// A2 on the drawn circle: the helicopter's own cap, never below the row's minimum range. True when it shortened the value.
+            bool Own(int aid, ref float v)
+            {
+                if (self == float.MaxValue) return false;
+                float cap = self;
+                if (t.MinAll.TryGetValue(aid, out float mn) && cap < mn) cap = mn;
+                if (!(v > cap)) return false;
+                v = cap;
+                return true;
             }
         }
 
@@ -2049,18 +2877,253 @@ namespace RealismOverhaul
             }
             sb.Append($" ; portées de missiles infrarouges mises à 0 contre un hélico en vol bas (sous {LowFlightFloor:0} m pour l'infanterie, {VehicleLowFlightFloor:0} m pour les véhicules) : {Interlocked.Read(ref _cutFloor)}" +
                       $", infanterie à moins de {LowFlightCloseRange:0} m laissée à la règle de vue {Interlocked.Read(ref _closeAllowed)} (sans verdict de vue utilisable {Interlocked.Read(ref _closeNoVerdict)})");
+            sb.Append($" ; ce que coûte le vol bas : dégâts majorés {Interlocked.Read(ref _dmgLow)} fois x{DamageMultLow.ToString("0.#", Inv)} et {Interlocked.Read(ref _dmgVeryLow)} fois x{DamageMultVeryLow.ToString("0.#", Inv)}" +
+                      $" (impacts de mitrailleuse ou de canon vus sur un hélico bas {Interlocked.Read(ref _dmgCalls)}, laissés tels quels parce que le mod l'avait fait descendre {Interlocked.Read(ref _dmgModDown)})" +
+                      $" ; portée de tir des hélicos bas plafonnée {Interlocked.Read(ref _cutShooter)} fois à {ShooterCapLow:0} m et {Interlocked.Read(ref _cutShooterVeryLow)} fois à {ShooterCapVeryLow:0} m" +
+                      $" (demandes vues {Interlocked.Read(ref _shooterAsks)}, hélicos bas libres du script {_tireursBas.Count + _tireursTresBas.Count}, hélicos bas ÉPARGNÉS parce que le script les tient {_a2Spared}{(_a2Off ? ", RÈGLE COUPÉE par son chien de garde" : "")})" +
+                      $" ; hélicos posés qui perdent l'immunité infrarouge {_helisPoses.Count} (tirs rendus possibles {Interlocked.Read(ref _floorPose)}, hélicos posés ÉPARGNÉS parce que le script les tient {_c1Spared})");
             string s = sb.ToString();
             if (!final && s == _lastProbe) return;
             _lastProbe = s;
             LogLow(s);
         }
 
+        // ---------------------------------------------------------------- main thread: unloading measurement [DEBARQUEMENT]
+        //  Nothing here changes the game. It answers, with real battles, the two questions the author asked before we go further:
+        //  how long an unload really takes (38 men out of a helicopter), and whether a mission stage was held up by it.
+
+        /// Every 0.25 s: the unload events of the hook, the height and speed of the transports still unloading, the ones that finished,
+        /// and the "did it keep its script route" check of the ones that finished 20 s ago.
+        static void UnloadTick(float now)
+        {
+            if (!_unloadCfgLogged) LogUnloadConfigOnce();
+            if (!_unloadPatched) return;
+            DrainUnload(now, false);
+        }
+
+        /// Reads the ring, samples the live unloads, closes the finished ones and checks the script routes. final: everything is closed.
+        static void DrainUnload(float now, bool final)
+        {
+            int end = Volatile.Read(ref _unloadWrite);
+            int start = end - _unloadRead > UnloadRing ? end - UnloadRing : _unloadRead;
+            float gameNow = UnityEngine.Time.time;
+            for (int k = start + 1; k <= end; k++)
+            {
+                try
+                {
+                    int w = k & (UnloadRing - 1);
+                    if (Volatile.Read(ref _unloadSeq[w]) != k) { _unloadLost++; continue; }   // slot not complete yet, or already overwritten
+                    int container = (int)(_unloadRing[w] >> 32);
+                    if (!_debarqLive.TryGetValue(container, out var d))
+                    {
+                        if (_debarqLive.Count >= MaxUnloadLive) { _unloadLost++; continue; }
+                        d = new Debarq { Eid = container, Debut = now, Dernier = now, Uid = -1, Side = -1 };
+                        var h0 = HeliByEid(container);
+                        if (h0 != null)
+                        {
+                            d.Helico = true; d.Uid = h0.Uid; d.Side = h0.Side; d.UnitId = h0.UnitId;
+                            try { d.Nom = h0.U.Name ?? "?"; } catch { d.Nom = "?"; }
+                        }
+                        else if (GroundByEid(container, out int guid, out int gside, out _)) { d.Uid = guid; d.Side = gside; }
+                        if (d.Uid > 0)
+                        {
+                            try { d.Script = Missions.ScriptReason(d.Uid, gameNow) != null; } catch { d.Script = false; }
+                            try { d.TrajetAvant = Missions.ScriptRouteFar(d.Uid, out d.ResteAvant); } catch { d.TrajetAvant = false; }
+                        }
+                        _debarqLive[container] = d;
+                    }
+                    d.Dernier = now;
+                    d.Sorties++;
+                }
+                catch { _unloadLost++; }
+            }
+            _unloadRead = end;
+
+            // live sample: height, speed and infrared threat of the transports that are unloading right now
+            foreach (var d in _debarqLive.Values)
+            {
+                if (!d.Helico) continue;
+                var h = HeliByEid(d.Eid);
+                if (h == null || !h.PosOk) continue;
+                if (h.HeightKnown)
+                {
+                    d.Releves++;
+                    d.HauteurSomme += h.Height;
+                    if (h.Height < d.HauteurMin) d.HauteurMin = h.Height;
+                    if (h.Height > d.HauteurMax) d.HauteurMax = h.Height;
+                    if (h.Vitesse >= 0f) d.VitesseSomme += h.Vitesse;
+                }
+                if (_helisPoses.Contains(d.Eid)) d.SousCinq = true;                          // the window C1 opens really happened here
+                // the threat scan walks every infrared shooter of the other side: once per second per unload is plenty, and costs nothing
+                if (now < d.ProchaineMenace) continue;
+                d.ProchaineMenace = now + 1f;
+                if (MenaceIr(h.Pos, h.Side, out float md) && md < d.MenaceDist) { d.MenaceVue = true; d.MenaceDist = md; }
+            }
+
+            // finished unloads (nothing came out for UnloadGap seconds), then the script-route check UnloadCheck seconds later
+            _tmpEids.Clear();
+            foreach (var kv in _debarqLive) if (final || now - kv.Value.Dernier >= UnloadGap) _tmpEids.Add(kv.Key);
+            foreach (int eid in _tmpEids)
+            {
+                var d = _debarqLive[eid];
+                _debarqLive.Remove(eid);
+                CloseUnload(d, final);
+                if (!final && d.Uid > 0) _debarqDone.Add(d);
+            }
+            // "was a mission stage held up?" — the honest question. A script route ENDING at the unload is the normal case (323 of the
+            // 435 script moves of RU_C01 end in an unload), so a route that is gone proves nothing. What does mean something is whether
+            // the script took the transport in hand again afterwards: a stage that carried on, against one that did not.
+            for (int i = _debarqDone.Count - 1; i >= 0; i--)
+            {
+                var d = _debarqDone[i];
+                if (!final && now - d.Dernier < UnloadCheck) continue;
+                _debarqDone.RemoveAt(i);
+                if (d.Verifie) continue;
+                d.Verifie = true;
+                if (!d.Script && !d.TrajetAvant) continue;                                   // the script never held it: nothing to say
+                bool repris = false;
+                try { repris = Missions.ScriptReason(d.Uid, UnityEngine.Time.time) != null; } catch { }
+                if (repris) _debarqSuite++; else _debarqSansSuite++;
+            }
+        }
+
+        static readonly List<int> _tmpEids = new();                  // DrainUnload scratch list (main thread only)
+
+        /// One finished unload: counted, and written in full while the line budget allows.
+        static void CloseUnload(Debarq d, bool final)
+        {
+            float duree = d.Dernier - d.Debut;
+            if (d.Helico)
+            {
+                _debarqHelis++; _debarqSortiesHeli += d.Sorties; _debarqDureeHeli += duree;
+                if (d.SousCinq) _debarqExposes++;
+                if (d.SousCinq && d.MenaceVue) _debarqMenaces++;
+            }
+            else { _debarqSol++; _debarqSortiesSol += d.Sorties; _debarqDureeSol += duree; }
+            if (d.Script) _debarqScript++;
+            if (final) _debarqOuverts++;                                                      // battle ended while it was still unloading
+            if (duree > _debarqPlusLong) { _debarqPlusLong = duree; _debarqPlusLongNom = d.Nom ?? (d.Helico ? "hélico" : "transport au sol"); }
+            // a really long unload is the only thing that could hold a mission stage up: it is said out loud, whatever the line budget
+            if (duree >= UnloadLongAlert)
+            {
+                _debarqLongs++;
+                if (_debarqLongs <= 10)
+                    LogDeb($"ATTENTION : {(d.Nom ?? "transport")} (uid {d.Uid}) a mis {duree.ToString("0.#", Inv)} s à débarquer {d.Sorties} unité(s)" +
+                           $"{(d.Script ? ", et il est tenu par le script de mission" : "")} : à surveiller si une étape de mission traîne");
+            }
+            if (_debarqLignes >= MaxUnloadLines) return;
+            _debarqLignes++;
+            if (_debarqLignes == MaxUnloadLines) { LogDeb($"plus de {MaxUnloadLines} débarquements détaillés : la suite est seulement comptée dans le relevé"); return; }
+            string hauteur = d.Releves > 0
+                ? $"hauteur {(d.HauteurSomme / d.Releves).ToString("0.#", Inv)} m en moyenne (de {d.HauteurMin.ToString("0.#", Inv)} à {d.HauteurMax.ToString("0.#", Inv)} m), vitesse {(d.VitesseSomme / d.Releves).ToString("0.#", Inv)} m/s"
+                : d.Helico ? "hauteur illisible" : "transport au sol";
+            LogDeb($"{(d.Nom ?? (d.Helico ? "hélico" : "transport au sol"))} (uid {d.Uid}, type {d.UnitId}, camp {d.Side}) : {d.Sorties} unité(s) débarquée(s) en {duree.ToString("0.#", Inv)} s ; {hauteur}" +
+                   $" ; {(d.Script ? "tenu par le script de mission" : "libre")}{(d.TrajetAvant ? $", trajet du script en cours ({d.ResteAvant.ToString("0", Inv)} m restants)" : "")}" +
+                   (d.Helico ? $" ; sous {AirborneMin:0} m plus de {LandedHold:0} s : {(d.SousCinq ? "OUI (l'immunité aux missiles infrarouges lui est retirée pendant ce temps)" : "non")}" +
+                               $" ; tireur infrarouge ennemi à portée : {(d.MenaceVue ? d.MenaceDist.ToString("0", Inv) + " m" : "aucun")}" : "") +
+                   (final ? " ; débarquement encore en cours à la fin de la bataille" : ""));
+        }
+
+        /// An enemy ground shooter carrying an infrared missile within its OWN range of this point. Main thread.
+        static bool MenaceIr(V3 pos, int heliSide, out float dist)
+        {
+            dist = float.MaxValue;
+            if (heliSide < 0 || heliSide > 1) return false;
+            int enemy = 1 - heliSide;
+            RefreshPositions(enemy, UnityEngine.Time.realtimeSinceStartup);
+            var l = _gateShooters;
+            float best = float.MaxValue;
+            for (int i = 0; i < l.Count; i++)
+            {
+                var g = l[i];
+                if (g.Side != enemy || !g.PosOk || !(g.IrRange > 0f)) continue;
+                float dx = g.Pos.x - pos.x, dz = g.Pos.z - pos.z;
+                float d2 = dx * dx + dz * dz;
+                if (d2 <= g.IrRange * g.IrRange && d2 < best) best = d2;
+            }
+            if (best == float.MaxValue) return false;
+            dist = MathF.Sqrt(best);
+            return true;
+        }
+
+        static Unit HeliByEid(int eid)
+        {
+            for (int i = 0; i < _heliList.Count; i++) if (_heliList[i].Eid == eid) return _heliList[i];
+            return null;
+        }
+
+        /// Once per battle: the engine's unload settings. THIS module writes none of them - but other modules do, and the line must say
+        /// so rather than call every number it prints "the game's own": the x2 of TransportUnloadDelay is written by the realism pass
+        /// (Mod.cs) and the four cargo-death multipliers by CargoMort.cs, both journaled and given back like every other GameConfig value.
+        static void LogUnloadConfigOnce()
+        {
+            _unloadCfgLogged = true;
+            try
+            {
+                var cfg = GameCfg.Instance;
+                if (cfg == null) { _unloadCfgLogged = false; return; }                        // not ready yet: tried again next tick
+                LogDeb($"réglages du jeu : délai de débarquement d'un transport {cfg.TransportUnloadDelay.ToString("0.##", Inv)} s, d'un bâtiment {cfg.HouseUnloadDelay} s, " +
+                       $"stress imposé à l'infanterie qui débarque {cfg.OnTransportUnloadCargoForcedStressPercentage} %, altitude cargo des hélicos {NavConst.HELICOPTERS_CARGO_ALTITUDE.ToString("0.#", Inv)} m " +
+                       $"(lecture seule ici ; le doublement du délai est écrit par le réalisme, journalisé et rendu)");
+                // What the game does to the men inside when their transport dies. THIS module writes none of it - but since 19/09/2026
+                // CargoMort.cs writes the four multipliers of this family, journalled under its own lot, and its postfix on the database
+                // load runs before this line does. So the line can no longer call what it prints "the game's values": it prints what is
+                // live, says who may have changed it, and adds the values CargoMort remembered before its first write when it has any.
+                string origineCargo = "";
+                try
+                {
+                    if (CargoMort.OrigineLue(out float oSol, out float oHl, out float oHh, out float oAir))
+                        origineCargo = $" ; valeurs d'origine du jeu, mémorisées par [CARGO] avant sa première écriture : au sol {oSol.ToString("0.###", Inv)}, " +
+                                       $"hélico bas {oHl.ToString("0.###", Inv)}, hélico haut {oHh.ToString("0.###", Inv)}, avion {oAir.ToString("0.###", Inv)}";
+                }
+                catch { }
+                // the four floors are printed raw: their unit is nowhere in the dumps, so the "%" the first version put after them was
+                // itself a claim. Only the stress value carries "Percentage" in its own name.
+                LogDeb($"mort du transport, sort du chargement : au sol plancher {cfg.OnTransportDeathCargoKillFloor} multiplicateur {cfg.OnTransportDeathCargoKillMultiplier.ToString("0.###", Inv)} ; " +
+                       $"hélico bas plancher {cfg.OnTransportDeathCargoKillHLFloor} multiplicateur {cfg.OnTransportDeathCargoKillHLMultiplier.ToString("0.###", Inv)} ; " +
+                       $"hélico haut plancher {cfg.OnTransportDeathCargoKillHHFloor} multiplicateur {cfg.OnTransportDeathCargoKillHHMultiplier.ToString("0.###", Inv)} ; " +
+                       $"avion plancher {cfg.OnTransportDeathCargoKillAirFloor} multiplicateur {cfg.OnTransportDeathCargoKillAirMultiplier.ToString("0.###", Inv)} ; " +
+                       $"choc imposé aux survivants {cfg.OnTransportDeathCargoForcedStressPercentage} % — ce module ne touche à aucune de ces valeurs et les quatre planchers " +
+                       "ne sont écrits par personne (leur unité, pourcentage ou nombre d'hommes, n'a pas pu être établie, ils sont donc donnés bruts), " +
+                       "mais les quatre multiplicateurs peuvent avoir été modifiés par [CARGO] : c'est sa ligne qui fait foi" +
+                       origineCargo);
+            }
+            catch (Exception e) { LogDeb("réglages de débarquement illisibles (" + e.GetBaseException().Message + ")"); }
+        }
+
+        static void ReportUnload(bool final)
+        {
+            int total = _debarqHelis + _debarqSol;
+            if (total == 0 && _debarqLive.Count == 0 && !final) return;
+            var sb = new StringBuilder(final ? "bilan" : "relevé");
+            sb.Append($" : {total} débarquement(s) terminé(s) ({_debarqHelis} par hélicoptère, {_debarqSol} au sol), en cours {_debarqLive.Count}");
+            sb.Append($" ; unités sorties {_debarqSortiesHeli} par hélicoptère / {_debarqSortiesSol} au sol");
+            if (_debarqHelis > 0) sb.Append($" ; durée moyenne par hélicoptère {(_debarqDureeHeli / _debarqHelis).ToString("0.#", Inv)} s");
+            if (_debarqSol > 0) sb.Append($", au sol {(_debarqDureeSol / _debarqSol).ToString("0.#", Inv)} s");
+            if (_debarqPlusLong > 0f) sb.Append($" ; le plus long {_debarqPlusLong.ToString("0.#", Inv)} s ({_debarqPlusLongNom})");
+            sb.Append($" ; tenus par le script de mission {_debarqScript}");
+            sb.Append($" ; hélicos restés sous {AirborneMin:0} m plus de {LandedHold:0} s pendant le débarquement (fenêtre où l'immunité infrarouge leur est retirée) {_debarqExposes}, dont avec un tireur infrarouge ennemi à portée {_debarqMenaces}");
+            // une étape retardée ne se voit pas à un trajet qui se termine (c'est le cas normal : le trajet FINIT par le débarquement),
+            // elle se voit à un transport que le script ne reprend plus, à un débarquement anormalement long, ou à un qui ne finit pas
+            sb.Append($" ; transports repris en main par le script {UnloadCheck:0} s après leur débarquement {_debarqSuite}, plus repris {_debarqSansSuite}");
+            if (_debarqLongs > 0) sb.Append($" ; débarquements de plus de {UnloadLongAlert:0} s : {_debarqLongs}");
+            if (_debarqOuverts > 0) sb.Append($" ; encore en cours à la fin de la bataille {_debarqOuverts}");
+            sb.Append($" ; observations reçues {Interlocked.Read(ref _unloadHookCalls)} (hors fil principal {Interlocked.Read(ref _unloadHookOffMain)}, perdues {_unloadLost}, erreurs {Interlocked.Read(ref _unloadHookErrors)})");
+            if (!_unloadPatched) sb.Append(_unloadRefused ? " ; observation non installée" : " ; observation pas encore installée");
+            string s = sb.ToString();
+            if (!final && s == _lastDeb) return;
+            _lastDeb = s;
+            LogDeb(s);
+        }
+
         static void Report(bool final)
         {
             long calls = Interlocked.Read(ref _calls), off = Interlocked.Read(ref _offMain), stale = Interlocked.Read(ref _stale);
             long heli = Interlocked.Read(ref _heliCalls), fromGround = Interlocked.Read(ref _fromGround), fromAir = Interlocked.Read(ref _fromAir), fromOther = Interlocked.Read(ref _fromOther);
-            // every shortened range: gun rules (watchdog counter) plus the infrared-only cuts, which the watchdog never counts
-            long changed = Interlocked.Read(ref _changed) + Interlocked.Read(ref _cutFloor) + Interlocked.Read(ref _cutLos), imp = Interlocked.Read(ref _impacts);
+            // every shortened range: gun rules (watchdog counter) plus the infrared-only cuts and the ground rule's, which the
+            // watchdog never counts. This total is printed and compared, never used to judge anything.
+            long changed = Interlocked.Read(ref _changed) + Interlocked.Read(ref _cutFloor) + Interlocked.Read(ref _cutLos)
+                           + Interlocked.Read(ref _changedSol), imp = Interlocked.Read(ref _impacts);
             string sig = $"{calls}|{heli}|{changed}|{Interlocked.Read(ref _errCore)}|{_patternTotal}|{imp}";
             if (!final && (sig == _lastSig || (calls == 0 && _patternTotal == 0))) return;
             _lastSig = sig;
@@ -2078,15 +3141,22 @@ namespace RealismOverhaul
             sb.Append($" : appels du calcul de portée {calls} (hors fil principal {off}, instantanés périmés {stale}), sur un hélico {heli} ");
             sb.Append($"(tireur au sol {fromGround}, aérien {fromAir}, inconnu {fromOther}), missiles infrarouges {Interlocked.Read(ref _irCalls)} ; portées raccourcies {changed} : ");
             sb.Append($"fiches {Interlocked.Read(ref _cutCaps)}, visée à l'œil contre hélico {Interlocked.Read(ref _cutManualHeli)} / contre le sol {Interlocked.Read(ref _cutManualGround)}, ");
-            sb.Append($"vol bas {Interlocked.Read(ref _cutFloor)} (infanterie proche laissée à la règle de vue {Interlocked.Read(ref _closeAllowed)}, sans verdict utilisable {Interlocked.Read(ref _closeNoVerdict)}), " +
-                      $"vue propre de l'infanterie {Interlocked.Read(ref _cutLos)} (auraient été refusés en mesure {Interlocked.Read(ref _losWould)}) ; comptées par le chien de garde (armes à tir direct) {Interlocked.Read(ref _changed)}");
-            sb.Append($" ; règles fiches {OnOff(_ruleCaps)}, visée {OnOff(_ruleManual)}{(_manualGroundLive ? " (+sol)" : "")}, vol bas {OnOff(_ruleFloor)}, vue propre {OnOff(_ruleLos)}");
-            sb.Append($" ; erreurs cœur {Interlocked.Read(ref _errCore)}, fiches {Interlocked.Read(ref _errCaps)}, visée {Interlocked.Read(ref _errManual)}, vol bas {Interlocked.Read(ref _errFloor)}, vue {Interlocked.Read(ref _errLos)}");
+            sb.Append($"vol bas {Interlocked.Read(ref _cutFloor)} (infanterie proche laissée à la règle de vue {Interlocked.Read(ref _closeAllowed)}, sans verdict utilisable {Interlocked.Read(ref _closeNoVerdict)}, hélicos descendus par le mod, qui restent visés normalement {Interlocked.Read(ref _floorModDown)}), " +
+                      $"vue propre de l'infanterie {Interlocked.Read(ref _cutLos)} (auraient été refusés en mesure {Interlocked.Read(ref _losWould)}), " +
+                      $"vue propre des véhicules (mitrailleuses et canons au-delà de {GunLosMinRange:0} m) {Interlocked.Read(ref _cutLosVeh)} (auraient été refusés en mesure {Interlocked.Read(ref _losVehWould)})" +
+                      $", vue propre au sol {VueSol.Coupes} (comptées à part {Interlocked.Read(ref _changedSol)}, relevé détaillé sous [VUE-SOL])" +
+                      $" ; comptées par le chien de garde (armes à tir direct, la vue propre au sol NON comprise) {Interlocked.Read(ref _changed)}");
+            sb.Append($" ; règles fiches {OnOff(_ruleCaps)}, visée {OnOff(_ruleManual)}{(_manualGroundLive ? " (+sol)" : "")}, vol bas {OnOff(_ruleFloor)}, vue propre infanterie {OnOff(_ruleLos)}, vue propre véhicules {OnOff(_ruleLosVeh)}, dégâts en vol bas {OnOff(_ruleDamage)}, portée des hélicos bas {OnOff(_ruleShooter)}, hélico posé {OnOff(_ruleLanded)}");
+            sb.Append($" ; erreurs cœur {Interlocked.Read(ref _errCore)}, fiches {Interlocked.Read(ref _errCaps)}, visée {Interlocked.Read(ref _errManual)}, vol bas {Interlocked.Read(ref _errFloor)}, vue infanterie {Interlocked.Read(ref _errLos)}, vue véhicules {Interlocked.Read(ref _errLosVeh)}, dégâts {Interlocked.Read(ref _errDamage)}, portée des hélicos bas {Interlocked.Read(ref _errShooter)}");
             sb.Append($" ; chien de garde : impacts {imp} ({perMin}/min), contact {(_lastContact ? "oui" : "non")}, silence {(_wdFired ? (_wdClock - _wdLastImpact).ToString("0", Inv) + " s" : "-")}{(_wdTripped ? ", RÈGLES COUPÉES" : "")}{(_wdRetest ? ", essai des règles remises en cours" : "")}{(_impactHook ? "" : ", compteur absent")}");
             sb.Append($" ; hélicos en vol {_helisAir.Count}, sous {LowFlightFloor:0} m {_helisLow.Count} (dont sous {VehicleLowFlightFloor:0} m {_helisVeryLow.Count}), paires infanterie-hélico bas à moins de {LowFlightCloseRange:0} m {_lowClose.Count}, posés {_landed}, unités au sol {_units.Ground.Count}, tireurs à missiles infrarouges {_gateShooters.Count} (dont infanterie {_units.IrInfantry.Count}), sans type {_unknownType}");
             if (_roofFixed + _roofRaw > 0) sb.Append($" ; hauteur des hélicos au-dessus d'un bâtiment : mesurée depuis le sol voisin {_roofFixed}, depuis la hauteur lue (pas de sol plus bas trouvé) {_roofRaw}");
             if (_scanErrors > 0) sb.Append($", lectures d'unités en échec {_scanErrors}");
-            sb.Append($" ; vue propre : véhicules à vue masquée jamais bloqués {Interlocked.Read(ref _losVehicle)}, sécurité de l'infanterie : lancements comptés {_sfLaunches}, " +
+            sb.Append($" ; vue propre des véhicules : {_losVehicles.Count} véhicule(s) suivi(s) (sur {_gunShooters.Count} armés d'une mitrailleuse ou d'un canon anti-hélico), hélicos en vol libres du script {_helisLibres.Count}, " +
+                      $"demandes de portée d'une mitrailleuse ou d'un canon sur un hélico libre {Interlocked.Read(ref _losVehAsks)}, balles et obus arrivés sur un hélico {Interlocked.Read(ref _gunHitsHeli)}" +
+                      $"{(_r6Off ? ", RÈGLE COUPÉE par son chien de garde" : "")}{(_r6NoCounter ? ", sans chien de garde propre (calcul des dégâts non accroché)" : "")}" +
+                      $" ; missiles infrarouges de véhicules à vue masquée, jamais bloqués {Interlocked.Read(ref _losVehicle)}");
+            sb.Append($" ; sécurité de l'infanterie : lancements comptés {_sfLaunches}, " +
                       $"sans tir depuis {_sfExposure:0} s avec hélicos à portée (paires masquées {_sfMasked}/{_sfPairs}), exposition totale {_sfExposureTotal:0} s, " +
                       $"lectures de missiles {_sfReads} (illisibles {_sfUnreadable}, erreurs {_sfReadErrors}{(_sfBroken ? ", lecture coupée" : "")}), alertes {_sfWarnings}");
 

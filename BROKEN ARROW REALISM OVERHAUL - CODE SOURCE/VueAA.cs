@@ -1,8 +1,12 @@
 // RealismOverhaul - anti-air line of sight towards helicopters (design R3, v0.23.0), identical for both sides.
 //  Player request 2026-09-16: MANPADS and short-range infrared SAMs may fire at a helicopter only when they see it themselves (trees,
 //  buildings, relief and a wall next to the shooter block it; a shooter high in a building sees farther). This module only computes the
-//  verdicts; AntiHeliPortee applies them to INFANTRY teams holding infrared MANPADS-class missiles (range 0 on a masked pair) once the map
-//  self-test, the copy check and the building calibration passed in this battle (ReadyForGating); vehicle pairs are measured only.
+//  verdicts; AntiHeliPortee applies them (range 0 on a masked pair) once the map self-test, the copy check and the building calibration
+//  passed in this battle (ReadyForGating).
+//  Player request 2026-09-18, after a 44 min battle: "des véhicules sont derrière des forêts et ils arrivent à tirer sur des hélicoptères
+//  à l'autre bout de la carte". The log proved him right: 31465 shots cut for infantry, ZERO for vehicles, because only shooters holding an
+//  infrared missile were ever queued here. AntiHeliPortee now also queues GUN vehicles (R6), with their own minimum distance: a shooter
+//  carries MinRange and pairs closer than that are not evaluated at all, so the rule never touches a close-in engagement.
 //  v0.22.8 measured 97-99 % of pairs masked, buildings first: the model is corrected here. v0.23.0 measured 98-100 % masked at 1-5 km
 //  on RU_C01, forest first: audited against that log, this is the geometry of the rule (25 m trees over 26.5 % of the map, helicopters
 //  32-40 m above the ground, eye 1.8 m: the line stays under the treetops for the first 59-74 % of its length), not a model error.
@@ -23,11 +27,18 @@
 //  only on a clear verdict.
 //  Pairs: shooters holding an infrared MANPADS-class missile (AntiHeliPortee snapshot) and enemy helicopters at least 5 m above the
 //  ground within that missile's range + 150 m (9 km at most); when that snapshot is missing, the Reperage anti-air scan at 6 km (measurement).
-//  Infantry pairs are queued first (they drive the rule; vehicle pairs are the first dropped at the pair cap). The line starts at the
+//  Infantry pairs are queued first (they are the ones that can never be given back), then vehicle pairs, nearest band first and under their
+//  OWN much lower cap: a vehicle that keeps its range is only the game as it was, while a cycle that runs past 3 s would open both rules at
+//  once. The line starts at the
 //  position the cached eye was computed at (at most 3 m from the unit), so the ignored shooter pixel, its ground and its building match.
 //  Every 0.5 s, 2 ms per frame at most; verdicts are published as immutable sets valid 3 s. Every 60 s, 300 building pixels are compared
 //  with the engine's map (destroyed buildings) and the map is copied again when it changed. No hook, solo campaign only, crash guard,
 //  error kill-switch. Logs: [VUE-AA].
+//  Since v1.4 the GROUND pass (VueSol, R7: player report of 2026-09-19, "les unités voient de loin à travers 10 forêts") borrows the map
+//  copy, the eye cache and the marcher through four calls at the end of the eye section. It is driven from Frame() below, LAST and only
+//  in an image where this module did not already spend its own budget, so the two line passes can never add up inside one image; it has
+//  its own budget, its own garrison budget, its own error counter, its own kill-switch and its own [VUE-SOL] report. Nothing of the
+//  anti-air cycle, of its 3 s freshness or of its statistics is shared with it: R4 and R6 behave exactly as before.
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -50,7 +61,7 @@ namespace RealismOverhaul
 {
     static class VueAA
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const float CycleSeconds = 0.5f, FallbackRange = 6000f, MaxRangeCap = 9000f, RangeMargin = 150f, ValidMs = 3000f;
         const float EyeInfantry = 1.8f, EyeVehicle = 3f, HeliAim = 1f, MinAirborne = 5f;
         const float TreeHeight = 25f, ForestMax = 45f;
@@ -59,6 +70,12 @@ namespace RealismOverhaul
         const float RoofMin = 3f, FlatMax = 1f, DefaultBuildingHeight = 8f, RecheckEvery = 60f;
         const double BudgetMs = 2.0;
         const int TestPoints = 20, TestPass = 18, MaxTestTries = 3, MaxMapTries = 240, MaxErrors = 50, MaxPairs = 6000, Bands = 10;
+        // The vehicle pass (R6) has its own, far lower cap. It shares this module's frame budget with the infantry pass, and the verdicts
+        // of a cycle are only published when the WHOLE cycle is done: a big helicopter attack could otherwise queue well over a thousand
+        // vehicle pairs, push the cycle past the 3 s freshness window and open BOTH rules at the worst possible moment. Vehicle pairs are
+        // queued nearest first, so the cap drops the far ones, which are the least likely to be a real engagement.
+        const int MaxVehiclePairs = 400;
+        const float VehicleNear = 1500f;                            // vehicle pairs closer than this are queued first (nearest first, cheaply)
         const int RingMax = 5, OwnRadiusPx = 9, OwnMaxPx = 400, BlockShift = 4, CalSamples = 5000, RecheckSamples = 300, MinCalSamples = 50;
         const int MaxGarrisonCallsPerCycle = 20, FullCauseEvery = 10;
         const int Clear = 0, CauseForest = 1, CauseRelief = 2, CauseBuilding = 3;
@@ -71,6 +88,11 @@ namespace RealismOverhaul
         internal static volatile HashSet<long> Masked = new();
         /// Every pair evaluated in the last completed cycle (masked or not), same key and same rules as Masked.
         internal static volatile HashSet<long> Evaluated = new();
+        /// The published verdicts come from the AntiHeliPortee snapshot, where every shooter carries its own minimum distance. False when
+        /// they come from the fallback anti-air scan, whose shooters have no floor at all: R6 (whose hook has no distance test of its own)
+        /// must not use those, or a vehicle could be silenced inside the 600 m the rule deliberately leaves alone.
+        internal static volatile bool MaskedFromLos;
+        static bool _cycleFromLos;
         static long _validUntil;                                    // Environment.TickCount64 limit of the published sets
         /// The published sets belong to a cycle finished less than 3 s ago.
         internal static bool MaskedFresh => Environment.TickCount64 <= Interlocked.Read(ref _validUntil);
@@ -88,7 +110,9 @@ namespace RealismOverhaul
         enum BuildMode { Unknown, Roof, Flat, Ambiguous }
 
         /// Eye of one shooter, cached while it moves less than 3 m (at most 10 s).
-        sealed class Eye
+        /// Internal since v1.4 only so the ground pass (VueSol, R7) can hold one between its cache lookup and its line walk; it reads
+        /// nothing of it and never builds one itself.
+        internal sealed class Eye
         {
             public V3 Pos;
             public float Time, Y, Gap, Top;
@@ -144,6 +168,12 @@ namespace RealismOverhaul
         static readonly long[] _offsetHist = new long[9];
         static double _calMs;
 
+        // R7 [VUE-SOL]: what the ground pass borrows here. It never touches the anti-air cycle, its budget or its statistics.
+        const int CellShiftSol = 2;                                 // 4 map pixels = 12 m: the ground pass's verdict cache cell
+        static int _garrisonSolCalls;                               // its OWN budget of native building reads, kept apart from the one below
+        static int _carteVersion;                                   // changes at every copy of the map, so the ground pass can forget its cache
+        static long _eyeSol;                                        // eyes computed for the ground pass (printed apart in the report)
+
         // cycle state (main thread only)
         static readonly List<Pair> _pairs = new();
         static readonly List<AirTarget> _air = new();
@@ -155,6 +185,9 @@ namespace RealismOverhaul
 
         // statistics (main thread only)
         static long _cycles, _evaluated, _skippedPairs, _clearWithForest, _ownScans, _losCycles, _fallbackCycles, _evalInfantry, _maskedInfantry;
+        static long _tooClose;                                      // pairs left out by the shooter's own minimum distance (R6 vehicles)
+        static int _vehPairsMax;                                    // most vehicle pairs queued in one cycle (how close the cap came)
+        static double _msInfantry, _msVehicle;                      // line-walk time of each pass, so the added cost of R6 can be read in the report
         static readonly long[] _byCause = new long[4];
         static readonly long[] _bandEval = new long[Bands], _bandMasked = new long[Bands];
         static long _fullN, _fullForest, _fullBuilding, _fullBuildingForest, _fullRelief, _fullReliefOther;
@@ -180,6 +213,7 @@ namespace RealismOverhaul
             _unclean = c.CreateEntry("SessionsInterrompues", 0, description: Build.Desc("Sécurité automatique, ne pas modifier"));
             _guardVersion = c.CreateEntry("VersionSecurite", "", description: Build.Desc("Sécurité automatique, ne pas modifier"));
             if (_guardVersion.Value != GuardVersion) { _guardVersion.Value = GuardVersion; _unclean.Value = 0; }
+            VueSol.CreatePrefs();                                   // R7 [VUE-SOL]: driven from here, so its settings are created here too
         }
 
         internal static void ResetSession()
@@ -192,6 +226,9 @@ namespace RealismOverhaul
 
         static void EndBattle(string why)
         {
+            // R7 [VUE-SOL] first: the ground pass writes its own final line and clears its own crash guard before this module drops
+            // the map it reads. It has no entry of its own in Mod.OnUpdate, so this is the single place it can follow.
+            try { VueSol.FinBataille(why); } catch (Exception e) { Mod.Log.Warning("[VUE-SOL] fin de calcul impossible : " + e.GetBaseException().Message); }
             if (_sessionArmed)
             {
                 _sessionArmed = false;
@@ -224,6 +261,7 @@ namespace RealismOverhaul
         {
             if (Masked.Count != 0) Masked = new HashSet<long>();
             if (Evaluated.Count != 0) Evaluated = new HashSet<long>();
+            MaskedFromLos = false;
             Interlocked.Exchange(ref _validUntil, fresh ? Environment.TickCount64 + (long)ValidMs : 0);
         }
 
@@ -237,6 +275,7 @@ namespace RealismOverhaul
         static void ResetStats()
         {
             _cycles = 0; _evaluated = 0; _skippedPairs = 0; _clearWithForest = 0; _ownScans = 0; _losCycles = 0; _fallbackCycles = 0; _evalInfantry = 0; _maskedInfantry = 0;
+            _tooClose = 0; _msInfantry = 0; _msVehicle = 0; _vehPairsMax = 0;
             Array.Clear(_byCause, 0, _byCause.Length); Array.Clear(_bandEval, 0, Bands); Array.Clear(_bandMasked, 0, Bands);
             _fullN = _fullForest = _fullBuilding = _fullBuildingForest = _fullRelief = _fullReliefOther = 0;
             _marchMaxMs = 0; _frameMaxMs = 0; _cycleMaxS = 0;
@@ -244,7 +283,7 @@ namespace RealismOverhaul
             _heliHeightSum = 0; _heliHeightMin = double.MaxValue; _heliHeightMax = 0;
             Array.Clear(_gapBuilding, 0, _gapBuilding.Length); Array.Clear(_gapOther, 0, _gapOther.Length); Array.Clear(_offsetHist, 0, _offsetHist.Length);
             _eyeComputed = _eyeNear = _eyeInside = _eyeElevated = _eyeGarrison = _eyeOffMap = _garrisonCalls = _garrisonDeferred = 0;
-            _eyeNearNotOn = 0;
+            _eyeNearNotOn = 0; _eyeSol = 0; _garrisonSolCalls = 0;
             _recheckRuns = _recheckChanged = _recopies = 0;
             _lastShooters = 0; _lastHelisAir = 0; _lastReport = null; _lastReportedEvaluated = 0; _lastReportedErrors = 0;
         }
@@ -257,6 +296,7 @@ namespace RealismOverhaul
             if (_enabled == null || !_enabled.Value || _refused)
             {
                 if (ReadyForGating || !GateFailed) SetGate(false, _refused ? "calcul de la vue coupé par sécurité" : "calcul de la vue désactivé", true);
+                VueSol.FinBataille(_refused ? "calcul coupé par sécurité" : "calcul désactivé");    // R7 rides this module: it stops with it
                 return;
             }
             float now = UnityEngine.Time.realtimeSinceStartup;
@@ -272,6 +312,7 @@ namespace RealismOverhaul
                     if (!_onlineLogged) { _onlineLogged = true; Log("partie en ligne : calcul coupé"); }
                     if (_stage != Stage.Waiting) ForgetMap();
                     SetGate(false, "partie en ligne", true);
+                    VueSol.FinBataille("partie en ligne");                                          // R7 rides this module: it stops with it
                     return;
                 }
                 IntPtr gp = gc.Pointer;
@@ -290,14 +331,22 @@ namespace RealismOverhaul
                 UpdateGate();
                 if (now >= _nextReport) { _nextReport = now + 30f; Report(false); }
             }
-            if (_errors > MaxErrors) return;
-            try
+            bool travail = _errors <= MaxErrors && (_stage == Stage.Copying || _stage == Stage.Calibrating || _cycleRunning);
+            if (_errors <= MaxErrors)
             {
-                if (_stage == Stage.Copying) CopyStep(now);
-                else if (_stage == Stage.Calibrating) CalibrateStep(now);
-                else if (_cycleRunning) RunCycle(now);
+                try
+                {
+                    if (_stage == Stage.Copying) CopyStep(now);
+                    else if (_stage == Stage.Calibrating) CalibrateStep(now);
+                    else if (_cycleRunning) RunCycle(now);
+                }
+                catch (Exception e) { Error(_stage == Stage.Copying ? "copie de la carte" : _stage == Stage.Calibrating ? "calibrage des bâtiments" : "calcul des vues", e); }
             }
-            catch (Exception e) { Error(_stage == Stage.Copying ? "copie de la carte" : _stage == Stage.Calibrating ? "calibrage des bâtiments" : "calcul des vues", e); }
+            // R7 [VUE-SOL]: the ground pass runs last, and walks its lines only in an image where this module did not already spend
+            // its own budget, so the two line passes can never add up inside one image. It keeps its own budget, its own error
+            // counter and its own kill-switch, and it is driven from here because it has no entry of its own in Mod.OnUpdate.
+            try { VueSol.Image(now, travail || _errors > MaxErrors); }
+            catch (Exception e) { Mod.Log.Warning("[VUE-SOL] tour impossible : " + e.GetBaseException().Message); }
         }
 
         static void UpdateGate()
@@ -370,7 +419,7 @@ namespace RealismOverhaul
                 _refused = true;
                 PublishEmpty(false);
                 SetGate(false, "calcul de la vue coupé par sécurité", true);
-                Mod.Log.Warning("[VUE-AA] calcul désactivé : les deux dernières parties calculées ne se sont pas terminées normalement (la règle de vue propre de l'infanterie reste en mesure seule)");
+                Mod.Log.Warning("[VUE-AA] calcul désactivé : les deux dernières parties calculées ne se sont pas terminées normalement (les règles de vue propre, infanterie et véhicules, restent en mesure seule)");
                 return false;
             }
             _sessionArmed = true;
@@ -394,8 +443,8 @@ namespace RealismOverhaul
             catch (Exception e) { sb.Append(", réglages du brouillard illisibles (" + e.GetBaseException().Message + ")"); }
             sb.Append($" ; règle de vue : arbres {TreeHeight:0} m, forêt opaque au-delà de {ForestMax:0} m traversés, sommet des bâtiments calibré sur la carte, " +
                       $"œil infanterie +{EyeInfantry:0.0} m / véhicule +{EyeVehicle:0} m, dans un bâtiment : sommet du bâtiment +{EyeInfantry:0.0} m, hélico +{HeliAim:0} m, en vol dès {MinAirborne:0} m, " +
-                      $"portée du missile +{RangeMargin:0} m (au plus {MaxRangeCap / 1000f:0} km), chaque pixel traversé ; case du tireur et de l'hélico ignorées ; " +
-                      "appliquée aux équipes d'infanterie seulement, véhicules mesurés sans blocage");
+                      $"portée de l'arme +{RangeMargin:0} m (au plus {MaxRangeCap / 1000f:0} km), chaque pixel traversé ; case du tireur et de l'hélico ignorées ; " +
+                      "appliquée aux équipes d'infanterie à missile infrarouge et, depuis la v1.3, aux véhicules à mitrailleuse ou canon au-delà de leur distance minimale");
             Log(sb.ToString());
         }
 
@@ -629,6 +678,7 @@ namespace RealismOverhaul
             }
             _maxObstacle = maxOb;
             _eyes.Clear();
+            _carteVersion++;                                        // R7 [VUE-SOL]: its kept verdicts describe the map that is replaced here
             _stage = Stage.Ready;
             _nextCycle = 0;
             _nextRecheck = now + RecheckEvery;
@@ -888,6 +938,82 @@ namespace RealismOverhaul
             return own;
         }
 
+        // ---------------------------------------------------------------- R7 [VUE-SOL]: what the ground pass borrows
+        //  Four calls and two flags, all main thread, all read-only for this module: the map copy, the eye cache and the marcher are
+        //  reused exactly as they are. Nothing here touches the anti-air cycle, its 2 ms budget, its freshness stamps or its
+        //  statistics, so R4 and R6 behave exactly as they did last night.
+
+        /// True when the map copy and the obstacle blocks are ready, so a line can be walked. The RULE still needs ReadyForGating.
+        internal static bool CarteSolPrete => _stage == Stage.Ready && _height != null && _terrain != null && _blockMax != null;
+
+        /// Changes whenever the map has been copied (the first copy of a battle, or a new one after a building came down). The ground
+        /// pass forgets everything it kept when this number moves.
+        internal static int VersionCarte => _carteVersion;
+
+        /// Start of a ground cycle: the ground pass gets its OWN budget of native building reads, so it can never spend the twenty the
+        /// anti-air pass keeps for infantry eyes.
+        internal static void NouveauCycleSol() => _garrisonSolCalls = 0;
+
+        /// Eye of a ground shooter, from this module's own cache, map and constants. Null when the map is not ready or the unit stands
+        /// off it. cell = its 12 m cell, hauteur = its eye height in half-metres (both are the ground pass's cache key).
+        internal static Eye OeilSol(int eid, V3 pos, bool infantry, float now, out int cell, out int hauteur)
+        {
+            cell = -1; hauteur = 0;
+            if (!CarteSolPrete) return null;
+            // the garrison budget is swapped in and out around the call: EyeOf reads one counter, and the two passes must not share it
+            int garde = _garrisonCallsThisCycle;
+            Eye e;
+            _garrisonCallsThisCycle = _garrisonSolCalls;
+            try { e = EyeOf(eid, pos, infantry, now); }
+            finally { _garrisonSolCalls = _garrisonCallsThisCycle; _garrisonCallsThisCycle = garde; }
+            if (e == null) return null;
+            _eyeSol++;
+            cell = CelluleSol(e.K0 % _w, e.K0 / _w);
+            hauteur = PalierSol(e.Y);
+            return e;
+        }
+
+        /// Aim point of a ground target, built exactly like a ground-level eye (the same two constants and the same clamp), and the
+        /// pixel it stands on, which the walk ignores just as it ignores the helicopter's. False when it stands off the map.
+        internal static bool CibleSol(V3 pos, bool infantry, out float visee, out int kt, out int cell, out int hauteur)
+        {
+            visee = 0f; kt = -1; cell = -1; hauteur = 0;
+            if (!CarteSolPrete) return false;
+            int px = PixelX(pos.x), py = PixelY(pos.z);
+            if ((uint)px >= (uint)_w || (uint)py >= (uint)_h) return false;
+            kt = py * _w + px;
+            float g = GroundAt(kt, px, py);
+            float lift = Math.Clamp(pos.y - g, 0f, EyeMaxLift);
+            visee = g + lift + (infantry ? EyeInfantry : EyeVehicle);
+            cell = CelluleSol(px, py);
+            hauteur = PalierSol(visee);
+            return true;
+        }
+
+        /// One line between a ground shooter's eye and a ground target's aim point, on this module's map copy. Returns the first cause
+        /// (0 dégagée, 1 forêt, 2 relief, 3 bâtiment) and how many metres of forest the line crossed. The anti-air statistics are not
+        /// touched: the ground pass keeps its own.
+        internal static int MarcheSol(Eye oeil, V3 cible, float visee, int kt, float dist, out float foret)
+        {
+            foret = 0f;
+            if (oeil == null || !CarteSolPrete) return Clear;
+            var p = new Pair
+            {
+                Ex = oeil.Pos.x, Ey = oeil.Y, Ez = oeil.Pos.z,
+                Tx = cible.x, Ty = visee, Tz = cible.z,
+                Dist = dist, K0 = oeil.K0, Kt = kt, Infantry = oeil.Infantry, Eye = oeil
+            };
+            return March(in p, false, out foret, out _);
+        }
+
+        // 3000 x 2000 pixels at most on the maps measured so far: 751 x 500 cells, well inside the 19 bits the ground pass packs
+        static int CelluleSol(int px, int py) => (py >> CellShiftSol) * (((_w + 3) >> CellShiftSol) + 1) + (px >> CellShiftSol);
+        static int PalierSol(float y) => (int)Math.Clamp(y * 2f, 0f, 4095f);
+
+        /// False on a map so large that a cell number would not fit in the 19 bits the ground pass packs into its key. The ground pass
+        /// then keeps no verdict at all and walks every line: a wrong answer is worse than a slow one.
+        internal static bool CelluleSolFiable => !CarteSolPrete || CelluleSol(_w - 1, _h - 1) < (1 << 19);
+
         // ---------------------------------------------------------------- line-of-sight cycles
 
         static void StartCycle(float now)
@@ -908,6 +1034,7 @@ namespace RealismOverhaul
                 _fallbackCycles++;
             }
             else _losCycles++;
+            _cycleFromLos = fromLos;
 
             int nh = fromLos ? los.Helis.Length : aa.Helis.Length;
             for (int i = 0; i < nh; i++)
@@ -930,23 +1057,33 @@ namespace RealismOverhaul
             int ns = fromLos ? los.Shooters.Length : aa.Shooters.Length;
             _lastShooters = ns;
 
-            int skipped = 0;
+            int skipped = 0, vehPairs = 0;
             if (_air.Count > 0)
             {
-                // pass 0: infantry (their verdicts drive the rule), pass 1: vehicles (measurement only, first dropped at the pair cap)
-                for (int pass = 0; pass < 2; pass++)
+                const float near2Const = VehicleNear * VehicleNear;
+                // pass 0: infantry (queued first, never dropped). Passes 1 and 2: vehicles, near band first, so the vehicle cap drops the
+                // far pairs and keeps the close ones, which are the engagements the player actually sees.
+                for (int pass = 0; pass < 3; pass++)
+                {
+                    if (pass == 2 && vehPairs >= MaxVehiclePairs) break;
                     for (int i = 0; i < ns; i++)
                     {
-                        int eid, side; V3 pos; bool infantry; float range;
-                        if (fromLos) { var s = los.Shooters[i]; eid = s.EntityId; side = s.Side; pos = s.Pos; infantry = s.Infantry; range = Math.Min(s.Range + RangeMargin, MaxRangeCap); }
-                        else { var s = aa.Shooters[i]; eid = s.EntityId; side = s.Side; pos = s.Pos; infantry = s.Infantry; range = FallbackRange; }
+                        int eid, side; V3 pos; bool infantry; float range, minRange;
+                        if (fromLos) { var s = los.Shooters[i]; eid = s.EntityId; side = s.Side; pos = s.Pos; infantry = s.Infantry; range = Math.Min(s.Range + RangeMargin, MaxRangeCap); minRange = s.MinRange; }
+                        else { var s = aa.Shooters[i]; eid = s.EntityId; side = s.Side; pos = s.Pos; infantry = s.Infantry; range = FallbackRange; minRange = 0f; }
                         if (infantry != (pass == 0)) continue;
+                        float min2 = minRange > 0f ? minRange * minRange : 0f;          // a pair closer than this is never evaluated: no verdict, no cut
                         Eye eye = null;
                         foreach (var hu in _air)
                         {
                             if (hu.Side == side) continue;                              // enemy helicopters only
                             float ddx = hu.Pos.x - pos.x, ddz = hu.Pos.z - pos.z;
-                            if (ddx * ddx + ddz * ddz > range * range) continue;
+                            float dd2 = ddx * ddx + ddz * ddz;
+                            if (dd2 > range * range) continue;
+                            if (dd2 < min2) { if (pass != 2) _tooClose++; continue; }
+                            if (pass == 1 && dd2 > near2Const) continue;                // kept for the far pass
+                            if (pass == 2 && dd2 <= near2Const) continue;               // already queued by the near pass
+                            if (pass != 0 && vehPairs >= MaxVehiclePairs) { skipped++; continue; }
                             if (_pairs.Count >= MaxPairs) { skipped++; continue; }
                             eye ??= EyeOf(eid, pos, infantry, now);
                             if (eye == null) break;
@@ -958,10 +1095,13 @@ namespace RealismOverhaul
                                 Key = Key(eid, hu.Eid), Ex = ex, Ey = eye.Y, Ez = ez, Tx = hu.Pos.x, Ty = hu.Pos.y + HeliAim, Tz = hu.Pos.z,
                                 Dist = MathF.Sqrt(mdx * mdx + mdz * mdz), K0 = eye.K0, Kt = hu.Kt, Infantry = infantry, Eye = eye
                             });
+                            if (pass != 0) vehPairs++;
                         }
                     }
+                }
             }
             _skippedPairs += skipped;
+            if (vehPairs > _vehPairsMax) _vehPairsMax = vehPairs;
             if (_pairs.Count == 0) { PublishEmpty(true); _cycles++; return; }
             _cycleMasked = new HashSet<long>(_pairs.Count);
             _cycleEval = new HashSet<long>(_pairs.Count);
@@ -976,7 +1116,9 @@ namespace RealismOverhaul
             while (_pairIdx < _pairs.Count)
             {
                 var p = _pairs[_pairIdx++];
-                bool full = _evaluated % FullCauseEvery == 0;
+                // the "all causes" sample is the only path that ignores March's early return and walks the whole line, which makes it the
+                // most expensive work in the module; it only describes the infantry model, so vehicle pairs never pay for it
+                bool full = p.Infantry && _evalInfantry % FullCauseEvery == 0;
                 double t0 = _sw.Elapsed.TotalMilliseconds;
                 int cause = March(in p, full, out float forestRun, out int mask);
                 double t1 = _sw.Elapsed.TotalMilliseconds;
@@ -986,7 +1128,8 @@ namespace RealismOverhaul
                 _byCause[cause]++;
                 int band = Math.Min(Bands - 1, (int)(p.Dist / 1000f));
                 _bandEval[band]++;
-                if (p.Infantry) { _evalInfantry++; if (cause != Clear) _maskedInfantry++; }
+                if (p.Infantry) { _evalInfantry++; _msInfantry += t1 - t0; if (cause != Clear) _maskedInfantry++; }
+                else _msVehicle += t1 - t0;
                 if (cause != Clear) { masked.Add(p.Key); _bandMasked[band]++; }
                 else if (forestRun > 0f) _clearWithForest++;
                 if (full) FullStats(mask);
@@ -997,6 +1140,7 @@ namespace RealismOverhaul
             if (_pairIdx < _pairs.Count) return;
             Masked = masked;                                        // one assignment each: readers never see a set being filled
             Evaluated = eval;
+            MaskedFromLos = _cycleFromLos;                          // set before the freshness stamp: R6 never reads a fresh set as a Los one
             Interlocked.Exchange(ref _validUntil, Environment.TickCount64 + (long)ValidMs);
             _cycleMasked = null; _cycleEval = null;
             _cycleRunning = false;
@@ -1120,8 +1264,11 @@ namespace RealismOverhaul
             sb.Append($"), paires évaluées {_evaluated} dont vue masquée {masked}{(_evaluated > 0 ? $" ({100.0 * masked / _evaluated:0} %)" : "")} (première cause : ");
             for (int c = CauseForest; c <= CauseBuilding; c++) sb.Append($"{(c > CauseForest ? ", " : "")}{CauseNames[c]} {_byCause[c]}");
             sb.Append($"), vue {CauseNames[Clear]} mais avec un peu de forêt {_clearWithForest}, maintenant {Masked.Count} masquées sur {Evaluated.Count}");
-            sb.Append($" ; infanterie (règle appliquée) {_evalInfantry} paires dont masquées {_maskedInfantry}{(_evalInfantry > 0 ? $" ({100.0 * _maskedInfantry / _evalInfantry:0} %)" : "")}, " +
-                      $"véhicules (mesure seule, jamais bloqués) {_evaluated - _evalInfantry} dont masquées {masked - _maskedInfantry}");
+            long evalVeh = _evaluated - _evalInfantry, maskedVeh = masked - _maskedInfantry;
+            sb.Append($" ; infanterie (missiles infrarouges) {_evalInfantry} paires dont masquées {_maskedInfantry}{(_evalInfantry > 0 ? $" ({100.0 * _maskedInfantry / _evalInfantry:0} %)" : "")}, " +
+                      $"véhicules (mitrailleuses et canons) {evalVeh} dont masquées {maskedVeh}{(evalVeh > 0 ? $" ({100.0 * maskedVeh / evalVeh:0} %)" : "")}" +
+                      $", paires trop proches non évaluées {_tooClose}, plus grand nombre de paires véhicules dans un cycle {_vehPairsMax} (plafond {MaxVehiclePairs})" +
+                      $" ; temps de calcul des lignes : infanterie {_msInfantry / 1000.0:0.0} s, véhicules {_msVehicle / 1000.0:0.0} s");
             if (_evaluated > 0)
             {
                 sb.Append(" ; par distance (évaluées/masquées) :");
@@ -1129,20 +1276,20 @@ namespace RealismOverhaul
                     if (_bandEval[b] > 0) sb.Append($" {b}-{(b == Bands - 1 ? "+" : (b + 1).ToString())} km {_bandEval[b]}/{_bandMasked[b]}");
             }
             if (_fullN > 0)
-                sb.Append($" ; toutes les causes sur 1 paire sur {FullCauseEvery} ({_fullN}) : forêt seule {_fullForest}, bâtiment seul {_fullBuilding}, bâtiment et forêt {_fullBuildingForest}, relief seul {_fullRelief}, relief et autre {_fullReliefOther}");
+                sb.Append($" ; toutes les causes sur 1 paire d'infanterie sur {FullCauseEvery} ({_fullN}) : forêt seule {_fullForest}, bâtiment seul {_fullBuilding}, bâtiment et forêt {_fullBuildingForest}, relief seul {_fullRelief}, relief et autre {_fullReliefOther}");
             sb.Append($" ; tireurs {_lastShooters}, hélicos en vol ennemis possibles {_lastHelisAir}");
             long air = _heliSamples - _heliLanded;
             if (air > 0) sb.Append($", hauteur des hélicos en vol min {_heliHeightMin:0} / moy {_heliHeightSum / air:0} / max {_heliHeightMax:0} m ({_heliLanded} relevés posés sur {_heliSamples})");
             else if (_heliSamples > 0) sb.Append($", hélicos tous posés ({_heliSamples} relevés)");
             if (_eyeComputed > 0)
             {
-                sb.Append($" ; yeux calculés {_eyeComputed} (à côté d'un bâtiment {_eyeNear} dont dans la rue au niveau du sol {_eyeNearNotOn}, dans un bâtiment {_eyeInside} dont surélevés {_eyeElevated} et garnison trouvée {_eyeGarrison}, appels bâtiments {_garrisonCalls}, reportés {_garrisonDeferred}, hors carte {_eyeOffMap})");
+                sb.Append($" ; yeux calculés {_eyeComputed} (à côté d'un bâtiment {_eyeNear} dont dans la rue au niveau du sol {_eyeNearNotOn}, dans un bâtiment {_eyeInside} dont surélevés {_eyeElevated} et garnison trouvée {_eyeGarrison}, appels bâtiments {_garrisonCalls}, reportés {_garrisonDeferred}, hors carte {_eyeOffMap}, dont demandés par la vue au sol {_eyeSol})");
                 sb.Append($" ; écart position - sol (signé) sur un bâtiment [{Gaps(_gapBuilding)}] ailleurs [{Gaps(_gapOther)}]");
             }
             if (_recheckRuns > 0) sb.Append($" ; contrôles des bâtiments {_recheckRuns}, pixels changés {_recheckChanged}, recopies {_recopies}");
             sb.Append($" ; marche la plus longue {_marchMaxMs:0.000} ms, image la plus longue {_frameMaxMs:0.00} ms, cycle le plus long {_cycleMaxS:0.00} s");
             if (_skippedPairs > 0) sb.Append($", paires ignorées (plus de {MaxPairs}) {_skippedPairs}");
-            sb.Append($" ; utilisable par la règle de l'infanterie : {(ReadyForGating ? "oui" : "non (" + GateReason + ")")}, erreurs {_errors}");
+            sb.Append($" ; utilisable par les règles de vue propre : {(ReadyForGating ? "oui" : "non (" + GateReason + ")")}, erreurs {_errors}");
             string s = sb.ToString();
             if (!final && s == _lastReport) return;
             _lastReport = s;

@@ -61,6 +61,10 @@ namespace RealismOverhaul
         static readonly List<V3> _loaded = new();
         static readonly HashSet<int> _ourRadius = new();                // uids carrying OUR radius (a dropped and re-created track must not mistake it for a script radius)
         static readonly HashSet<string> _logged = new();
+        // units the mod itself added on the enemy side (Renforts.cs): their guard position is the place they arrived at, and they are
+        // left alone until `quiet` so the module's own approach order is not cancelled by a counter-attack started the same minute.
+        // Kept outside _t because TrackUnits rebuilds _t from the live list at every pass.
+        static readonly Dictionary<int, (V3 home, float quiet)> _renfort = new();
         internal static Stance Current;
         internal static bool CanCommand;
         internal static LuaMap Map;
@@ -96,7 +100,7 @@ namespace RealismOverhaul
 
         internal static void ResetSession()
         {
-            _t.Clear(); _bot.Clear(); _botRetry.Clear(); _reserved.Clear(); _objStart.Clear(); _loaded.Clear(); _ourRadius.Clear(); _logged.Clear();
+            _t.Clear(); _bot.Clear(); _botRetry.Clear(); _reserved.Clear(); _objStart.Clear(); _loaded.Clear(); _ourRadius.Clear(); _logged.Clear(); _renfort.Clear();
             Current = Stance.Unknown; CanCommand = false;
             _locked = _announced = _coop = _radiusBroken = false; _cargoFilterOk = true;
             _start = -1; _next = _nextStance = _nextHost = _nextDiag = _nextMoney = 0; _lastCand = _lastKept = _moveLogs = 0; _hostStatus = null; _wasCommanding = false; _lastFiltered = false; _localUid = -1;
@@ -155,7 +159,7 @@ namespace RealismOverhaul
             {
                 _nextDiag = now + 30f;
                 string kept = _lastFiltered ? $"{_lastKept}/{_lastCand} visibles (ni cachées ni embarquées)" : $"{_lastCand}, sans filtre de visibilité";
-                Log($"diag : {groups.Count} groupe(s) joueur détecté(s) ({Ops.SpotLabel}), posture {Current}, {_t.Count} suivie(s) ({kept}), {Ops.Count} op(s), {_moveLogs} mouvement(s) ; unités du script protégées {_protNow} (protections {_protStarts}, fins {_protEnds}, rayons rendus {_protRadius}, retirées d'une op {_protOps}){(safe ? "" : $" ; EN PAUSE : {notReady}")}");
+                Log($"diag : {groups.Count} groupe(s) joueur détecté(s) sur {Ops.LastRaw} vu(s) par le jeu (perdus : aucun de mes véhicules à moins de 2 km {Ops.LostFar}, aucune de tes unités visible à moins de 150 m {Ops.LostUnseen}) ({Ops.SpotLabel}), posture {Current}, {_t.Count} suivie(s) ({kept}), {Ops.Count} op(s), {_moveLogs} mouvement(s) ; unités du script protégées {_protNow} (protections {_protStarts}, fins {_protEnds}, rayons rendus {_protRadius}, retirées d'une op {_protOps}){(safe ? "" : $" ; EN PAUSE : {notReady}")}");
             }
         }
 
@@ -212,6 +216,19 @@ namespace RealismOverhaul
         internal static bool Parked(Track t, float now) => t.Script == null && t.OpId == 0 && !t.Returning && t.IdleSince >= 0 && now - t.IdleSince >= 30f && now >= t.Cooldown;
         internal static long Key(V3 v) => ((long)UnityEngine.Mathf.RoundToInt(v.x) << 32) ^ (uint)UnityEngine.Mathf.RoundToInt(v.z);
         internal static void MarkFight(V3 p, float react, float now) { foreach (var t in _t.Values) if (D2(t.Home, p) < react) t.LastFight = now; }
+
+        // ------------------------------------------------------------ units added by the mod itself (Renforts.cs)
+        /// A unit the mod added on the enemy side: it is driven by this file exactly like any other free enemy unit (the mission
+        /// script never named it, so Missions.ScriptReason says null for it), with its guard position at the place it arrived and a
+        /// quiet time during which no counter-attack takes it. Nothing else here knows it is ours.
+        internal static void NoteRenfort(int uid, V3 home, float quiet)
+        {
+            if (uid <= 0 || _renfort.Count >= 200) return;
+            _renfort[uid] = (home, quiet);
+            if (_t.TryGetValue(uid, out var t)) { t.Home = home; if (quiet > t.Cooldown) t.Cooldown = quiet; }
+        }
+        internal static void ForgetRenfort(int uid) => _renfort.Remove(uid);
+        internal static int RenfortCount => _renfort.Count;
 
         static void MoneyDiag(float now)
         {
@@ -271,7 +288,13 @@ namespace RealismOverhaul
                 try
                 {
                     var u = kv.Value; var p = u.GetPosition();
-                    if (!_t.TryGetValue(kv.Key, out var t)) { bool ours = _ourRadius.Contains(kv.Key); _t[kv.Key] = t = new Track { Home = p, LastPos = p, Role = u.UnitRole, Radius = ours, RadiusChecked = ours }; }
+                    if (!_t.TryGetValue(kv.Key, out var t))
+                    {
+                        bool ours = _ourRadius.Contains(kv.Key);
+                        _t[kv.Key] = t = new Track { Home = p, LastPos = p, Role = u.UnitRole, Radius = ours, RadiusChecked = ours };
+                        // a unit the mod added itself: it guards the place it arrived at, and it is left alone until its quiet time
+                        if (_renfort.TryGetValue(kv.Key, out var rf)) { t.Home = rf.home; if (rf.quiet > t.Cooldown) t.Cooldown = rf.quiet; }
+                    }
                     t.U = u; seen.Add(kv.Key);
                     if (ok == null && IsArmour(t.Role) && u.GetCargoUnitsCount() > 0) _loaded.Add(p);
                     bool still = u.IsIdle() && (p - t.LastPos).sqrMagnitude < 100f;
@@ -495,6 +518,7 @@ namespace RealismOverhaul
         static string _spotSource;                                      // visibility source used by the last spotted check (null = none usable)
         internal static int Count => _ops.Count;
         /// Honest label for the diag: which visibility source filtered the player groups, or none.
+        internal static int LastRaw, LostFar, LostUnseen;   // diag of the group filter chain (see HonestGroups)
         internal static string SpotLabel => _spotSource != null ? $"repérés : source {_spotSource}" : "sans filtre de visibilité, proximité seulement";
         static void Log(string s) => Mod.Log.Msg("[IA-ENNEMIE] " + s);
 
@@ -543,13 +567,17 @@ namespace RealismOverhaul
                 if (_dictOk && lua != raw.Count) { Log($"incohérence groupes statique={raw.Count} LuaAI={lua} : repli LuaAI"); _dictOk = false; }
             }
             if (!_dictOk) { raw.Clear(); var arr = EnemyAi.Ai.GetDetectedGroupPositions(playerTeam, 0); for (int i = 0; i < (arr?.Length ?? 0); i++) raw.Add(new Group { Pos = arr[i], Cost = -1 }); }
+            // 2026-09-19: the player killed dozens of enemies while this returned 0 groups every single time. The line only
+            // reported the final count, so nothing said whether the GAME never detected him or whether these two filters threw
+            // everything away. Count each step, so the next log names the culprit instead of leaving us to guess.
+            LastRaw = raw.Count; LostFar = LostUnseen = 0;
             var res = new List<Group>();
             foreach (var g in raw)
             {
-                if (!EnemyAi.Tracks.Any(t => EnemyAi.D2(t.LastPos, g.Pos) < 2000f)) continue;
+                if (!EnemyAi.Tracks.Any(t => EnemyAi.D2(t.LastPos, g.Pos) < 2000f)) { LostFar++; continue; }
                 float sc = SpottedCost(gc, playerTeam, g.Pos, 150f, out int n);
-                if (sc >= 0) { if (n == 0) continue; }
-                else if (!PlayerNear(playerTeam, g.Pos, 300f)) continue;     // sans filtre de visibilité : au moins une unité du joueur réellement là (protège d'une lecture inversée de _groups)
+                if (sc >= 0) { if (n == 0) { LostUnseen++; continue; } }
+                else if (!PlayerNear(playerTeam, g.Pos, 300f)) { LostUnseen++; continue; }     // sans filtre de visibilité : au moins une unité du joueur réellement là (protège d'une lecture inversée de _groups)
                 res.Add(g);
             }
             return res;

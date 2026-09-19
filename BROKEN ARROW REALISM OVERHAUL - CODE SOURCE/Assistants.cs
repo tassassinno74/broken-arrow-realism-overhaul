@@ -32,6 +32,7 @@ using TMP = Il2CppTMPro.TMP_Text;
 using TeamSide = Il2CppNetworkCommon.Enums.TeamSide;
 using AiComp = Il2CppBrokenArrow.Client.Ecs.AI.Components;
 using AiTargetDetect = Il2CppBrokenArrow.Client.Ecs.AI.Systems.AiTargetDetectionSystem;
+using AbilityRow = Il2CppBrokenArrow.DataBase.Models.Abilities;
 
 namespace RealismOverhaul
 {
@@ -39,9 +40,16 @@ namespace RealismOverhaul
     static partial class Assistants
     {
         internal static MelonPreferences_Entry<bool> Enabled;
-        static MelonPreferences_Entry<bool> _smokeDefault, _longRange, _longRangeValuable, _aiBoost, _retDefault, _retReverse, _debDefault, _ravDefault, _ambDefault;
+        static MelonPreferences_Entry<bool> _smokeDefault, _longRange, _longRangeValuable, _aiBoost, _retDefault, _retReverse, _debDefault, _ravDefault, _ambDefault, _favSpread;
         static MelonPreferences_Entry<int> _cbCooldown, _cbInterval, _fawCooldown, _minAmmo, _retDistance, _retCooldown, _retReverseDistance, _ambRearm, _debMinDrop, _ravAmmo, _ravHp;
+        static MelonPreferences_Entry<int> _favTargetCooldown, _favMaxPerTick, _favUnclean;
         static MelonPreferences_Entry<float> _cbFirstError, _ambFraction, _ravRange;
+        static MelonPreferences_Entry<string> _favGuardVersion;
+        static MelonPreferences_Entry<bool> _favMigre025;
+        // "eyes on the target": where the centre of the sheaf lands depends on who of yours actually watches the area.
+        // _rangeMargin belongs to the firing-error budget (fire safety) and works even when the observer rule is off.
+        static MelonPreferences_Entry<bool> _eyeOn, _eyeBrake, _eyeSilence;
+        static MelonPreferences_Entry<float> _eyeObs, _eyeSeen, _eyeBlind, _eyeZone, _rangeMargin;
 
         // Order-panel buttons exist for artillery only: CB counter-battery, FAW fire at will.
         // Retreat, dismount, ambush and resupply are global options (prefs, later the Mod options tab), not panel buttons.
@@ -50,9 +58,14 @@ namespace RealismOverhaul
         [Flags] enum Opt { None = 0, CB = 1, FAW = 2, AA = 4, RIP = 8, DEF = 16, DEBC = 32, RAVX = 64, GAR = 128, RZ = 256 }
 
         const int ROLE_MLRS = 130, ROLE_MORTAR = 131, ROLE_LAM = 132, ROLE_ARTY = 133, ROLE_LRSAM = 15, ROLE_SRSAM = 16, ROLE_AAINF = 34;
+        // roles used by the observer rule only (same values as Mod.cs): scouts, snipers, special forces, scout helicopters, drones, planes
+        const int ROLE_RECONINF = 32, ROLE_SNIPERS = 33, ROLE_SPECFORCES = 36, ROLE_RECONHELI = 70, ROLE_DRONE = 100, ROLE_PLANE_MIN = 160, ROLE_PLANE_MAX = 164;
 
         static readonly Dictionary<int, Opt> _byUid = new();                 // unit UID -> options
         static readonly Dictionary<int, float> _nextShot = new();           // unit UID -> time allowed to fire again
+        // FAV target reservation: one entry per ENEMY (UID), never a circle on the ground (a 150 m circle used to lock out every other piece)
+        static readonly Dictionary<int, float> _favTargetNext = new();      // enemy UID -> time before which no piece fires at it again
+        // old reservation by area, kept only for the escape hatch FeuAVolonteRepartition = false
         static readonly List<(V3 pos, float until)> _recentTargets = new();
         static readonly HashSet<int> _smokeDone = new();
         static readonly HashSet<int> _aiArtyDone = new();
@@ -90,8 +103,20 @@ namespace RealismOverhaul
             _cbCooldown = c.CreateEntry("ContreBatterieDelaiPiece", 20, description: Build.Desc("CB : secondes minimum entre deux salves d'une même pièce"));
             _cbInterval = c.CreateEntry("ContreBatterieIntervalle", 15, description: Build.Desc("CB : secondes minimum entre deux salves sur une même batterie ennemie (toutes pièces confondues)"));
             _cbFirstError = c.CreateEntry("ContreBatterieEcartInitial", 150f, description: Build.Desc("CB : écart de la première salve en mètres ; divisé par 2 à chaque salve sur la même batterie, jusqu'à 0 (pile dessus)"));
-            _fawCooldown = c.CreateEntry("FeuAVolonteDelai", 50, description: Build.Desc("Secondes minimum entre deux salves d'une même pièce (x3 pour la longue portée)"));
+            _fawCooldown = c.CreateEntry("FeuAVolonteDelai", 35, description: Build.Desc("Secondes minimum entre deux salves d'une même pièce (x3 pour la longue portée, x2 sous 40 % de munitions, x3 sous 30 %)"));
+            _favTargetCooldown = c.CreateEntry("FeuAVolonteDelaiCible", 45, description: Build.Desc("Secondes pendant lesquelles plus aucune pièce ne retire sur le même ennemi (la réserve porte sur l'ennemi, plus sur une zone)"));
+            _favMaxPerTick = c.CreateEntry("FeuAVolonteSalvesParPasse", 4, description: Build.Desc("Nombre maximum de salves ordonnées dans la même passe (toutes les 2 s) ; 0 = autant que de pièces prêtes"));
+            _favSpread = c.CreateEntry("FeuAVolonteRepartition", true, description: Build.Desc("Répartit les pièces sur les cibles repérées (une pièce par cible, la plus proche d'abord) ; false = ancien comportement, une seule pièce à la fois et réserve de 150 m autour du point visé"));
             _minAmmo = c.CreateEntry("MunitionsMinimum", 20, description: Build.Desc("Une pièce ne tire plus automatiquement sous ce pourcentage de munitions"));
+            // ---- les yeux sur l'objectif : l'artillerie tire toujours, mais elle ne touche que si quelqu'un regarde la zone
+            _eyeOn = c.CreateEntry("ArtillerieOeil", true, description: Build.Desc("L'artillerie tire toujours, même très loin, mais la salve ne tombe juste que si une de tes unités voit la zone : personne ne regarde = la salve tombe à côté et ne se corrige pas ; un éclaireur, un drone ou un désignateur laser sur la zone = elle se resserre salve après salve. Limite honnête : le mod compare des distances à plat, il ne sait pas si une crête, un bois ou de la fumée bouche la vue — il est donc toujours trop gentil, jamais trop sévère. Et l'écart est toujours rogné quand une de tes unités est près du point visé : tes obus ne partent jamais vers tes propres troupes"));
+            _eyeObs = c.CreateEntry("ArtillerieOeilFacteurObservateur", 0.005f, description: Build.Desc("Œil : écart de la première salve quand un éclaireur, un drone ou un tireur d'élite voit la zone, en part de la distance de tir (0.005 = 20 m à 4 000 m) ; plafond 40 m, divisé par 2 à chaque salve"));
+            _eyeSeen = c.CreateEntry("ArtillerieOeilFacteurVu", 0.015f, description: Build.Desc("Œil : écart de la première salve quand une unité ordinaire à toi voit la zone (0.015 = 60 m à 4 000 m) ; plafond 120 m, divisé par 2 à chaque salve. Mets 0 pour que la règle ne joue plus que sur la contre-batterie"));
+            _eyeBlind = c.CreateEntry("ArtillerieOeilFacteurAveugle", 0.05f, description: Build.Desc("Œil : écart quand personne à toi ne voit la zone (0.05 = 200 m à 4 000 m) ; minimum 80 m, plafond 400 m, et il ne se resserre jamais — personne ne peut corriger le tir"));
+            _eyeZone = c.CreateEntry("ArtillerieOeilRayonZone", 150f, description: Build.Desc("Œil : un ennemi repéré à moins de cette distance du point visé suffit à considérer que ton camp voit la zone (mètres)"));
+            _eyeBrake = c.CreateEntry("ArtillerieOeilFrein", true, description: Build.Desc("Tir aveugle : la pièce tire quand même, mais deux fois moins vite, et le feu à volonté préfère une cible que quelqu'un observe (aucun tir n'est interdit)"));
+            _eyeSilence = c.CreateEntry("ArtillerieOeilSilenceAveugle", false, description: Build.Desc("Contre-batterie : après 3 salves aveugles sur la même position sans que rien ne s'y fasse repérer, laisser ce point tranquille 3 minutes. C'est la seule règle qui empêche vraiment un tir : coupée par défaut"));
+            _rangeMargin = c.CreateEntry("ArtillerieMargePortee", 50f, description: Build.Desc("Sécurité des tirs : marge gardée à l'intérieur de la portée de la pièce (mètres). L'écart de tir est rogné pour que le point visé reste toujours à portée, sinon le jeu aurait de quoi rapprocher la pièce — le mod ne déplace jamais ton artillerie"));
             _aiBoost = c.CreateEntry("IAAmelioree", true, description: Build.Desc("Campagne : l'IA ennemie utilise sa contre-batterie et ses fumigènes à 100 % (réglages internes du jeu)"));
             _retDefault = c.CreateEntry("RepliAutoParDefaut", true, description: Build.Desc("Repli auto : tes véhicules touchés (jamais l'artillerie) s'arrêtent et reculent loin de l'ennemi repéré"));
             _retDistance = c.CreateEntry("RepliDistance", 120, description: Build.Desc("Distance du repli en demi-tour, en mètres"));
@@ -107,7 +132,20 @@ namespace RealismOverhaul
             _ravAmmo = c.CreateEntry("RavitaillementSeuilMunitions", 25, description: Build.Desc("RAV : munitions (%) en dessous desquelles l'unité part se ravitailler"));
             _ravHp = c.CreateEntry("RavitaillementSeuilSante", 45, description: Build.Desc("RAV : santé (%) en dessous de laquelle l'unité part se réparer"));
             _ravRange = c.CreateEntry("RavitaillementDistanceMax", 2500f, description: Build.Desc("RAV : distance maximum du dépôt ou du camion (mètres)"));
+            // safety: two battles in a row left unfinished with the new spreading -> the artillery goes back to the old behaviour (one piece at a time)
+            _favUnclean = c.CreateEntry("SessionsInterrompues", 0, description: Build.Desc("Sécurité automatique, ne pas modifier"));
+            _favGuardVersion = c.CreateEntry("VersionSecurite", "", description: Build.Desc("Sécurité automatique, ne pas modifier"));
+            if (_favGuardVersion.Value != GuardVersion) { _favGuardVersion.Value = GuardVersion; _favUnclean.Value = 0; }
+            // the new default delay only replaces the old one, never a delay the player chose himself
+            _favMigre025 = c.CreateEntry("ReglagesV025", false, is_hidden: true);
+            if (!_favMigre025.Value)
+            {
+                if (_fawCooldown.Value == 50) _fawCooldown.Value = 35;      // old v0.24 default -> new default
+                _favMigre025.Value = true;
+            }
         }
+
+        const string GuardVersion = "1.1";
 
         static void Log(string s) => Mod.Log.Msg("[ASSIST] " + s);
 
@@ -123,8 +161,9 @@ namespace RealismOverhaul
         /// Per-battle reset. AI statics are NOT restored here (only when the campaign ends), so a new mission's own values are not overwritten.
         internal static void ResetSession()
         {
+            EndGuard();                                                      // the battle that ends here was a clean one
             DestroyButtons();
-            _byUid.Clear(); _nextShot.Clear(); _recentTargets.Clear(); _smokeDone.Clear(); _aiArtyDone.Clear(); _warnNext.Clear();
+            _byUid.Clear(); _nextShot.Clear(); _recentTargets.Clear(); _favTargetNext.Clear(); _smokeDone.Clear(); _aiArtyDone.Clear(); _warnNext.Clear();
             _mineByEntityId.Clear(); _mineByUid.Clear(); _rangeByUnitId.Clear(); _minRangeByUnitId.Clear(); _longByUnitId.Clear(); _airById.Clear();
             _ammoByUnit = null; _ammoSrc = IntPtr.Zero;
             _selectedArty.Clear();
@@ -139,8 +178,18 @@ namespace RealismOverhaul
             _uiFailed = false; _aiDone = false;   // _uiLogged kept: the UI diagnostic is logged once per game launch
             // artillery (FAV / CB): visibility self-tests, fire watchdog, per-type ranges, CB key, diagnostics
             Visibility.ResetSession();
-            _fireJobs.Clear(); _blacklist.Clear(); _nextJobs = 0f;
+            _fireJobs.Clear(); _blacklist.Clear(); _creeps.Clear(); _nextJobs = 0f;
+            _favPieces.Clear(); _favTgtIdx.Clear(); _favUids.Clear(); _favPrune.Clear();
+            _favErrors = 0; _favArmed = true; _favNextReport = 0f; _favFullLogged = false;
+            _favUncleanAtStart = _favUnclean?.Value ?? 0;                    // read after EndGuard: 2 = the two previous battles were cut short
+            if (_favUncleanAtStart >= 2) Log($"artillerie : {_favUncleanAtStart} batailles de suite interrompues, la répartition du feu à volonté reste coupée pour cette bataille (une seule pièce par passe)");
             _ammoTypeByUnitId.Clear(); _missileByUnitId.Clear();
+            _porteeLogged.Clear(); _porteesOubliLogged = false;               // range logs: once per type and once for the forgetting, per battle
+            // observer rule + firing-error budget: caches, per-target salvo counters and both kill-switches are per battle
+            _eyes.Clear(); _typeByEyeUid.Clear(); _sightByUnitId.Clear(); _laserByUnitId.Clear(); _favSalvos.Clear();
+            _friendPos.Clear(); _friendPosAt = -999f; _friendTeam = -1;
+            _eyeErrors = 0; _eyeArmed = true; _eyeNotified = false;
+            _keptOut = 0; _keptHard = true;
             _cbKey = -1; _cbNearEnemy[0].Clear(); _cbNearEnemy[1].Clear(); _cbNearOwn[0].Clear(); _cbNearOwn[1].Clear(); _nextCbDiag = 0f;
             _missingLogged.Clear(); _compLogged.Clear(); _compBroken = false;
             _selSig.Clear(); _selSigSet = false; _nextSelLog = 0f;
@@ -148,6 +197,32 @@ namespace RealismOverhaul
         }
 
         internal static void ReArmAi() { _aiDone = false; _smokeTriggersSet = false; }
+
+        /// Closing the game: the battle in progress is treated as finished normally (same as the start of the next mission).
+        internal static void OnQuit() => EndGuard();
+
+        /// Crash guard of the artillery spreading: the marker is written the first time a piece is given an automatic fire order
+        /// in this battle, and wiped when the battle ends normally. Two battles in a row left unfinished -> the spreading stays off
+        /// for the whole next battle and the artillery goes back to the old behaviour (one piece at a time).
+        static bool _favArmedSession;
+        static int _favUncleanAtStart;                                       // value read at the start of the battle: it never changes during it
+
+        static void ArmGuard()
+        {
+            if (_favArmedSession || _favUnclean == null) return;
+            _favArmedSession = true;
+            try { _favUnclean.Value += 1; MelonPreferences.Save(); } catch { }
+        }
+
+        static void EndGuard()
+        {
+            if (!_favArmedSession || _favUnclean == null) return;
+            _favArmedSession = false;
+            try { if (_favUnclean.Value != 0) { _favUnclean.Value = 0; MelonPreferences.Save(); } } catch { }
+        }
+
+        /// The player asked for the spreading AND the guard has not tripped (read once per battle, never mid-battle).
+        static bool FavSpreadOn => _favSpread != null && _favSpread.Value && _favUncleanAtStart < 2;
 
         // State of the frame being handled, read by the cached delegates below: same frame, main thread, no closure built per frame.
         static GameController _fGc;
@@ -227,6 +302,8 @@ namespace RealismOverhaul
             var units = _map.GetUnits(V3.zero, 1_000_000f, -1, local);
             _mineByEntityId.Clear();
             _mineByUid.Clear();
+            _eyes.Clear();
+            bool eyes = EyeOn;                                               // the sight snapshot is built in this pass, never in a separate one
             for (int i = 0; i < (units?.Length ?? 0); i++)
             {
                 var u = units[i];
@@ -235,6 +312,7 @@ namespace RealismOverhaul
                     if (u == null || !u.IsAlive() || u.GetOwnerPlayerUID() != local) continue;
                     _mineByEntityId[u.Entity.EntityId] = u;
                     _mineByUid[u.UID] = u;
+                    if (eyes) AddEye(u);
                 }
                 catch (Exception e) { Warn("units", "unité illisible : " + e.Message); }
             }
@@ -1299,12 +1377,252 @@ namespace RealismOverhaul
             return _ammoByUnit.TryGetValue(unitId, out var r) ? r : _noAmmo;
         }
 
+        // ------------------------------------------------------------ « les yeux sur l'objectif » : qui de tes unités regarde la zone visée
+        // The artillery ALWAYS fires, however far the target is: the rule only moves the centre of the sheaf.
+        //   somebody watches  -> the salvo is on the point and tightens salvo after salvo (somebody can correct the fire)
+        //   nobody watches    -> the salvo lands wide and NEVER tightens (nobody can correct it)
+        // The snapshot is filled inside RefreshUnits (1 Hz, Planif slot), which already walks every unit of the player: no extra pass.
+        // Honest limit, to be told to the player: the sight is a flat distance against Sensors.OpticsGround. Relief, woods and smoke are
+        // ignored, so the mod OVER-estimates what he sees: it is too kind, never too harsh.
+        struct Eye
+        {
+            public V3 Pos;
+            public float Vue;                                                // ground optics of the unit (m), 0 = unreadable
+            public float Laser;                                              // laser designator range usable RIGHT NOW (m), 0 = none
+            public int Role, Uid;
+            public bool Desig;                                               // carries a designator (even one it cannot use while moving)
+        }
+
+        const int EYES_MAX = 512;                                            // snapshot ceiling: a battle never has more friendly units than that
+        const float EYE_CAP_OBS = 40f, EYE_CAP_SEEN = 120f, EYE_FLOOR_BLIND = 80f, EYE_CAP_BLIND = 400f, EYE_ZERO = 15f;
+        const float EYE_BLIND_PENALTY = 1500f;                               // sorting only: at equal range the pairing prefers a watched target
+        const float EYE_FRIEND_SAFE = 250f;                                  // the aim point may never be pushed closer than this to one of MY OWN units
+        const float EYE_SILENCE = 180f;                                      // CB: how long a point beaten for nothing is left alone
+        const int EYE_BLIND_MAX = 3;                                         // CB: blind salvoes before that silence
+
+        static readonly List<Eye> _eyes = new();
+        static readonly Dictionary<int, int> _typeByEyeUid = new();          // unit UID -> DB unit id (spares 3 interop calls per unit per second)
+        static readonly Dictionary<int, float> _sightByUnitId = new();       // DB unit id -> largest OpticsGround
+        static readonly Dictionary<int, (float range, bool inMove)> _laserByUnitId = new();
+        static readonly Dictionary<int, (int n, float last)> _favSalvos = new();   // enemy UID -> salvoes already landed on him
+        static int _eyeErrors;
+        static bool _eyeArmed = true, _eyeNotified;
+
+        /// The player asked for the rule AND it has not been switched off by its own error counter.
+        static bool EyeOn => Enabled != null && Enabled.Value && _eyeOn != null && _eyeOn.Value && _eyeArmed;
+
+        /// Roles whose whole job is to look: scouts, snipers, special forces, scout helicopters and drones.
+        /// Filtered by ROLE, never by the Units.Type bits, so drones (role 100) are not lost.
+        static bool IsObserverRole(int r) => r == ROLE_RECONINF || r == ROLE_SNIPERS || r == ROLE_SPECFORCES || r == ROLE_RECONHELI || r == ROLE_DRONE;
+
+        /// One line of the sight snapshot for a live unit of the player. Planes only pass over: they never count as an observer.
+        static void AddEye(LuaUnit u)
+        {
+            int role;
+            try { role = u.UnitRole; } catch { return; }
+            if (role >= ROLE_PLANE_MIN && role <= ROLE_PLANE_MAX) return;
+            if (_eyes.Count >= EYES_MAX) return;
+            int uid = 0;
+            try { uid = u.UID; } catch { return; }
+            if (!_typeByEyeUid.TryGetValue(uid, out int id))
+            {
+                id = 0;
+                try { id = u.SpawnData?.Unit?.UnitID ?? 0; } catch { }
+                if (_typeByEyeUid.Count < 5000) _typeByEyeUid[uid] = id;
+            }
+            float vue = SightOf(id);
+            var las = LaserOf(id);
+            if (vue <= 0f && las.range <= 0f) return;                        // sees nothing and designates nothing: useless in the snapshot
+            float laser = 0f;
+            if (las.range > 0f)
+            {
+                bool ok = las.inMove;
+                if (!ok) { try { ok = u.IsIdle(); } catch { ok = false; } }  // a designator that cannot work on the move must be stopped
+                if (ok) laser = las.range;
+            }
+            V3 pos;
+            try { pos = u.GetPosition(); } catch { return; }
+            _eyes.Add(new Eye { Pos = pos, Vue = vue, Laser = laser, Role = role, Uid = uid, Desig = las.range > 0f });
+        }
+
+        /// Ground sight of a unit type (largest Sensors.OpticsGround); 0 = unreadable, that unit then never gives sight of anything.
+        static float SightOf(int id)
+        {
+            if (id <= 0) return 0f;
+            if (_sightByUnitId.TryGetValue(id, out var v)) return v;
+            v = 0f;
+            try
+            {
+                var src = DataBaseService._instance?.RawAccess;
+                if (src != null && src.Units.TryGetById(id, out var row) && row != null)
+                {
+                    var list = row.Sensors;
+                    if (list != null) for (int i = 0; i < list.Count; i++) { var s = list[i]; if (s != null) v = Math.Max(v, s.OpticsGround); }
+                }
+            }
+            catch { v = 0f; }
+            _sightByUnitId[id] = v;
+            return v;
+        }
+
+        /// Laser designator of a unit type: largest range, and whether it still works while the unit moves.
+        static (float range, bool inMove) LaserOf(int id)
+        {
+            if (id <= 0) return (0f, false);
+            if (_laserByUnitId.TryGetValue(id, out var v)) return v;
+            float range = 0f; bool inMove = false;
+            try
+            {
+                var src = DataBaseService._instance?.RawAccess;
+                if (src != null && src.Units.TryGetById(id, out var row) && row != null)
+                {
+                    ReadLaser(row.DefaultAbilities, ref range, ref inMove);
+                    var list = row.Abilities;
+                    if (list != null) for (int i = 0; i < list.Count; i++) ReadLaser(list[i], ref range, ref inMove);
+                }
+            }
+            catch { range = 0f; inMove = false; }
+            v = (range, inMove);
+            _laserByUnitId[id] = v;
+            return v;
+        }
+
+        static void ReadLaser(AbilityRow a, ref float range, ref bool inMove)
+        {
+            if (a == null) return;
+            try
+            {
+                if (!a.IsLaserDesignator) return;
+                float r = a.LaserMaxRange;
+                if (r <= 0f) return;
+                if (r > range) range = r;
+                if (a.LaserUsableInMove) inMove = true;
+            }
+            catch { }
+        }
+
+        /// Observation class of a point: 3 designated by laser, 2 an observer's eye on it, 1 simply inside a friendly unit's sight, 0 blind.
+        /// byUid / byDist = the unit that gives the best class and its distance to the point, so the log can name it (0 = none).
+        /// On ANY doubt (rule off, empty snapshot, read error) the answer is 1, never 0: the mod is kind when it does not know.
+        /// selfUid = the enemy the point IS (feu à volonté): he is skipped in the "an enemy is spotted near the point" refinement,
+        /// otherwise the target sits 0 m from itself and class 0 could never happen on that side.
+        static int Oeil(V3 p, VisResult vis, out int byUid, out float byDist, int selfUid = 0)
+        {
+            byUid = 0; byDist = 0f;
+            if (!EyeOn || _eyes.Count == 0) return 1;
+            try
+            {
+                int best = 0; float bestD2 = float.MaxValue;
+                // squared flat distances only: the square root is taken once, on the unit finally shown in the log
+                for (int i = 0; i < _eyes.Count; i++)
+                {
+                    var e = _eyes[i];
+                    float dx = e.Pos.x - p.x, dz = e.Pos.z - p.z, d2 = dx * dx + dz * dz;
+                    if (e.Laser > 0f && d2 <= e.Laser * e.Laser)             // designated: nothing can be better
+                    {
+                        byUid = e.Uid; byDist = (float)Math.Sqrt(d2);
+                        return 3;
+                    }
+                    if (e.Vue > 0f && d2 <= e.Vue * e.Vue)
+                    {
+                        int c = e.Desig || IsObserverRole(e.Role) ? 2 : 1;
+                        // the best class wins; at equal class the nearest one is the one shown
+                        if (c > best || (c == best && d2 < bestD2)) { best = c; bestD2 = d2; byUid = e.Uid; }
+                    }
+                }
+                if (best > 0) byDist = (float)Math.Sqrt(bestD2);
+                // free refinement: an enemy your side has really spotted next to the point means your side sees something there
+                if (best == 0 && EnemyNear(vis, p, selfUid)) { best = 1; byUid = 0; }
+                return best;
+            }
+            catch (Exception ex)
+            {
+                byUid = 0; byDist = 0f;
+                if (++_eyeErrors >= 20)
+                {
+                    _eyeArmed = false;
+                    Log("artillerie : trop d'erreurs dans la règle des observateurs, elle est coupée jusqu'à la fin de la bataille (l'artillerie tire comme avant)");
+                }
+                Warn("oeil", "artillerie : lecture des observateurs impossible : " + ex.Message);
+                return 1;
+            }
+        }
+
+        /// An enemy your side has really spotted, inside the zone around the aimed point (ground units only).
+        static bool EnemyNear(VisResult vis, V3 p, int selfUid)
+        {
+            if (vis == null || !vis.Usable || vis.Units.Count == 0) return false;
+            float r = _eyeZone != null ? Math.Max(0f, _eyeZone.Value) : 150f;
+            if (r <= 0f) return false;
+            float r2 = r * r;
+            for (int i = 0; i < vis.Units.Count; i++)
+            {
+                var s = vis.Units[i];
+                if (s.role < 0) continue;
+                if (selfUid != 0 && s.uid == selfUid) continue;               // the target does not prove it is being watched
+                if ((s.pos - p).sqrMagnitude <= r2) return true;
+            }
+            return false;
+        }
+
+        /// Error radius asked for this salvo, in metres: how far from the point the centre of the sheaf may sit.
+        /// Blind fire never tightens, whatever the number of salvoes: nobody is there to correct it.
+        static float Ecart(int cls, float dist, int salvos)
+        {
+            if (cls >= 3) return 0f;
+            float e;
+            if (cls == 2) e = Math.Min(_eyeObs.Value * dist, EYE_CAP_OBS) * Half(salvos);
+            else if (cls == 1) e = Math.Min(_eyeSeen.Value * dist, EYE_CAP_SEEN) * Half(salvos);
+            else
+            {
+                e = _eyeBlind.Value * dist;
+                if (e < EYE_FLOOR_BLIND) e = EYE_FLOOR_BLIND;
+                if (e > EYE_CAP_BLIND) e = EYE_CAP_BLIND;
+            }
+            return e <= EYE_ZERO ? 0f : e;                                   // anything under 15 m is "pile dessus", as the CB already did
+        }
+
+        /// 1 / 2^n without Math.Pow (n salvoes already landed on the same point).
+        static float Half(int n) => n <= 0 ? 1f : n >= 16 ? 0f : 1f / (1 << n);
+
+        /// What the player reads in the log for each class.
+        static string EyeName(int cls) => cls >= 3 ? "tir désigné au laser" : cls == 2 ? "observateur sur zone" : cls == 1 ? "zone tenue à vue" : "aucune unité à toi ne voit la zone";
+
+        /// Which of his units gives sight of the point, for the log; empty when it is an enemy marker or nobody in particular.
+        static string EyeWho(int uid, float dist)
+        {
+            if (uid == 0) return "";
+            string name = "?";
+            try { if (_mineByUid.TryGetValue(uid, out var u) && u != null) name = u.Name; } catch { }
+            return $" — {name} à {dist:0} m";
+        }
+
+        static int SalvesSur(int enemyUid) => _favSalvos.TryGetValue(enemyUid, out var v) ? v.n : 0;
+
+        static void BumpFavSalvo(int enemyUid, float now)
+        {
+            int n = _favSalvos.TryGetValue(enemyUid, out var v) ? v.n + 1 : 1;
+            _favSalvos[enemyUid] = (n, now);
+        }
+
+        /// One on-screen notice per battle, the first time a salvo really leaves without anybody watching the area.
+        static void NotifyBlindOnce()
+        {
+            if (_eyeNotified) return;
+            _eyeNotified = true;
+            try { Mod.Notify(TxtKey.N_ARTY_NO_EYES); } catch { }
+        }
+
         // ------------------------------------------------------------ contre-batterie / feu à volonté
         static readonly Dictionary<int, float> _minRangeByUnitId = new();
         static readonly Dictionary<int, bool> _longByUnitId = new();
 
         static readonly Dictionary<int, AmmoTypeEnum> _ammoTypeByUnitId = new();
         static readonly Dictionary<int, bool> _missileByUnitId = new();
+        // Unit types whose range line is already in the log for this battle. OublierPortees() does NOT clear it: the ranges are read again,
+        // but the same line is not written once more at every zone change (the selection log still prints the current range and minimum).
+        static readonly HashSet<int> _porteeLogged = new();
+        static bool _porteesOubliLogged;                                     // the "forgotten ranges" line is written once per battle, not at every call
 
         /// Range of the unit's indirect-fire rounds (all loadouts are listed in the DB, whatever the unit carries).
         /// A piece with at least one artillery / mortar / MLRS round (trajectory 20/30/40) uses the shortest of those rounds and their minimum,
@@ -1359,7 +1677,7 @@ namespace RealismOverhaul
             {
                 _rangeByUnitId[id] = best; _minRangeByUnitId[id] = min; _longByUnitId[id] = lr;
                 _ammoTypeByUnitId[id] = ammo; _missileByUnitId[id] = nMissile > 0;
-                if (best > 0)
+                if (best > 0 && _porteeLogged.Add(id))
                 {
                     string name = "?"; try { name = u.Name; } catch { }
                     Log($"portée {name} (type {id}, rôle {role}) : {best:0} m, minimum {min:0} m, {(lr || IsLongRange(role) ? "longue portée (missiles seuls)" : "artillerie")}, munition {ammo} ({nConv} obus/roquettes dont {nConvGuided} guidés, {nMissile} missiles dont {nMissileGuided} guidés)");
@@ -1385,6 +1703,28 @@ namespace RealismOverhaul
             int id = 0;
             try { id = u.SpawnData?.Unit?.UnitID ?? 0; } catch { }
             return id > 0 && _missileByUnitId.GetValueOrDefault(id);
+        }
+
+        /// Forget every weapon range cached per unit type, so the next evaluation reads the database again.
+        /// PorteeMiniCarte lowers the ammunition MINIMAL ranges while the playable zone is small and gives the real values back when it
+        /// grows: it calls this at every zone change. Without it the assistants would keep refusing targets that are back in range, and
+        /// would order fire the game refuses once the real minimums are back. Only the ranges go: the per-battle counters, the error
+        /// counters and the kill-switches are untouched, and a call outside a battle simply empties dictionaries that are already empty.
+        internal static void OublierPortees()
+        {
+            try
+            {
+                // RangeOf() takes _rangeByUnitId as its cache key and writes the five entries in one go, so the five are dropped together.
+                _rangeByUnitId.Clear(); _minRangeByUnitId.Clear(); _longByUnitId.Clear();
+                _ammoTypeByUnitId.Clear(); _missileByUnitId.Clear();
+                _dfRangeById.Clear();                                        // direct fire (EMBU / GAR / RZ): read from the same ammunition rows
+                if (!_porteesOubliLogged)
+                {
+                    _porteesOubliLogged = true;
+                    Log("portées oubliées : les distances de tir en cache seront relues dans la base (la zone de jeu a changé)");
+                }
+            }
+            catch { }
         }
 
         static readonly Dictionary<int, bool> _airById = new();
@@ -1415,7 +1755,8 @@ namespace RealismOverhaul
             return res;
         }
 
-        sealed class CbSpot { public V3 Pos; public int Salvos; public float LastSalvo = -999f, LastSeen; }
+        // Hold / BlindSalvos / SilentUntil: the graduated brakes on blind counter-battery fire (see "les yeux sur l'objectif").
+        sealed class CbSpot { public V3 Pos; public int Salvos, BlindSalvos; public float LastSalvo = -999f, LastSeen, Hold, SilentUntil; }
         static readonly List<CbSpot> _cbSpots = new();
 
         static int _cbKey = -1;                                                           // key of GetDetectedCBTargets holding ENEMY fire spots (-1 = not proven yet)
@@ -1442,6 +1783,33 @@ namespace RealismOverhaul
             float best = 99999f;
             foreach (var q in pts) { float d = V3.Distance(p, q); if (d < best) best = d; }
             return best;
+        }
+
+        // Positions of every live unit of MY TEAM (scripted allies included), refreshed at most once a second and kept in the same
+        // list: it is the only thing that tells the firing error how close it may push a salvo to my own troops.
+        static readonly List<V3> _friendPos = new();
+        static float _friendPosAt = -999f;
+        static int _friendTeam = -1;
+
+        static void RefreshFriendPos(int myTeam, float now)
+        {
+            if (myTeam < 0) return;
+            // "now" is game time and starts again at the next battle: a negative age means a new battle, never a fresh snapshot
+            float age = now - _friendPosAt;
+            if (_friendTeam == myTeam && age >= 0f && age < 1f && _friendPos.Count > 0) return;
+            _friendTeam = myTeam; _friendPosAt = now;
+            _friendPos.Clear();
+            try
+            {
+                _map ??= new LuaMap();
+                var arr = _map.GetUnits(V3.zero, 1_000_000f, myTeam, -1);
+                for (int i = 0; i < (arr?.Length ?? 0); i++)
+                {
+                    var e = arr[i];
+                    try { if (e != null && e.IsAlive()) _friendPos.Add(e.GetPosition()); } catch { }
+                }
+            }
+            catch (Exception e) { Warn("amis", "artillerie : positions de tes unités illisibles : " + e.Message); }
         }
 
         /// Enemy fire positions (known as soon as a shot is fired, even when the battery is not spotted), grouped per battery.
@@ -1540,17 +1908,27 @@ namespace RealismOverhaul
             catch (Exception e) { return "illisible (" + e.Message + ")"; }
         }
 
+        // ------------------------------------------------------------ old reservation by area (150 m), used only when FeuAVolonteRepartition = false
         static bool RecentlyTargeted(V3 p)
         {
-            foreach (var t in _recentTargets) if ((t.pos - p).sqrMagnitude < 150f * 150f) return true;
+            for (int i = 0; i < _recentTargets.Count; i++) if ((_recentTargets[i].pos - p).sqrMagnitude < 150f * 150f) return true;
             return false;
         }
 
-        // (unit, distance band) pairs that made a piece move after an automatic order: never used again this battle
-        const float BAND = 250f;
-        static readonly HashSet<long> _blacklist = new();
+        static void ForgetRecent(V3 p)
+        {
+            for (int i = _recentTargets.Count - 1; i >= 0; i--)
+                if ((_recentTargets[i].pos - p).sqrMagnitude < 1f) _recentTargets.RemoveAt(i);
+        }
+
+        // (unit, distance band) pairs that made a piece move after an automatic order.
+        // The order is cancelled the moment the piece creeps (the mod NEVER lets the artillery travel), but the band is only
+        // forbidden after a second creep or a big one, and for 180 s: one lay of 5 m no longer kills the piece for the whole battle.
+        const float BAND = 250f, BAN = 180f;
+        static readonly Dictionary<long, float> _blacklist = new();          // band key -> time the ban ends
+        static readonly Dictionary<long, int> _creeps = new();               // band key -> number of creeps already seen
         static long BandKey(int uid, float dist) => ((long)uid << 20) + Math.Min(0xFFFFF, Math.Max(0, (int)(dist / BAND)));
-        static bool Blacklisted(int uid, float dist) => _blacklist.Count > 0 && _blacklist.Contains(BandKey(uid, dist));
+        static bool Blacklisted(int uid, float dist, float now) => _blacklist.Count > 0 && _blacklist.TryGetValue(BandKey(uid, dist), out var until) && now < until;
 
         static readonly HashSet<int> _missingLogged = new();
 
@@ -1562,6 +1940,76 @@ namespace RealismOverhaul
             Warn("why" + uid, $"{tag} {name} uid {uid} : {reason}");
         }
 
+        // ------------------------------------------------------------ feu à volonté : une pièce par cible (répartition en une seule passe)
+        // Pass 1 walks the armed pieces, fires counter-battery at once and sets the pieces still free aside; pass 2 pairs those
+        // pieces with the spotted enemies (nearest pair first, one piece per enemy) and sends every order in the same pass.
+        // The buffers below are reused from one pass to the next: no allocation and no LINQ in the pairing.
+        struct FavPiece
+        {
+            public int Uid, Ammo;
+            public LuaUnit U;
+            public V3 Pos;
+            public float Range, Min, MinRaw;
+            public bool Long, ValuableOnly;
+            public string Tag, CbWhy;
+        }
+
+        const int FAV_MAX = 64;                                              // buffer size: at most 64 pieces and 64 targets handled per pass
+        static readonly List<FavPiece> _favPieces = new();                   // pieces ready to fire this pass
+        static readonly List<int> _favTgtIdx = new();                        // indexes into vis.Units of the targets free this pass
+        static readonly List<int> _favUids = new();                          // copy of the armed UIDs (the player can click a button during the pass)
+        static readonly List<int> _favPrune = new();                         // enemy UIDs whose reservation has expired
+        static readonly int[] _favPick = new int[FAV_MAX];                   // piece -> index in _favTgtIdx of its target (-1 = none)
+        static readonly int[] _favOrder = new int[FAV_MAX];                  // pieces in the order they were paired (nearest pair first)
+        static readonly bool[] _favTgtUsed = new bool[FAV_MAX];
+        static readonly byte[] _favTgtWhy = new byte[FAV_MAX];               // 1 not valuable, 2 out of range, 3 forbidden band, 4 reachable
+        static readonly byte[] _favTgtEye = new byte[FAV_MAX];               // classe d'observation de chaque cible libre (0 aveugle .. 3 désignée)
+        static readonly int[] _favTgtEyeUid = new int[FAV_MAX];              // unité à toi qui donne cette classe (0 = aucune en particulier)
+        static readonly float[] _favTgtEyeDist = new float[FAV_MAX];         // sa distance à la cible
+        static readonly float[] _favD = new float[FAV_MAX * FAV_MAX];        // distance pièce -> cible, calculée UNE fois par passe (-1 = paire impossible)
+        static readonly System.Text.StringBuilder _favSb = new();
+
+        // counters of the pass, written into the one report line at the end of Logic
+        static int _cPieces, _cReady, _cNotIdle, _cCooldown, _cAmmo, _cRange, _cLongExcl, _cPending, _cDead;
+        static int _cTargets, _cGround, _cTgtCooldown, _cUsable, _cOutOfRange, _cBlack, _cValuable, _cAssigned, _cRefused, _cTropPres;
+        static float _favNextReport;
+        static int _favErrors;
+        static bool _favArmed = true, _favFullLogged;                        // _favArmed = false: too many errors, the spreading is off until the end of the battle
+
+        static void FavResetCounters()
+        {
+            _cPieces = _cReady = _cNotIdle = _cCooldown = _cAmmo = _cRange = _cLongExcl = _cPending = _cDead = 0;
+            _cTargets = _cGround = _cTgtCooldown = _cUsable = _cOutOfRange = _cBlack = _cValuable = _cAssigned = _cRefused = _cTropPres = 0;
+        }
+
+        /// Delay before this piece fires again: the magazine brakes it by itself as it empties (no separate ammunition budget).
+        static float FavCooldown(int ammoPct, bool longRange)
+        {
+            float c = _fawCooldown.Value;
+            if (ammoPct < 30) c *= 3f;
+            else if (ammoPct < 40) c *= 2f;
+            return longRange ? c * 3f : c;
+        }
+
+        /// Reservations older than 120 s are dropped (a dead enemy simply stops coming back in the spotted list).
+        static void FavPrune(float now)
+        {
+            if (_favTargetNext.Count > 0)
+            {
+                _favPrune.Clear();
+                foreach (var kv in _favTargetNext) if (now - kv.Value > 120f) _favPrune.Add(kv.Key);
+                for (int i = 0; i < _favPrune.Count; i++) _favTargetNext.Remove(_favPrune[i]);
+            }
+            // salvo counters of the observer rule: an enemy nobody has shelled for 2 min starts again with a first, wider salvo
+            if (_favSalvos.Count > 0)
+            {
+                _favPrune.Clear();
+                foreach (var kv in _favSalvos) if (now - kv.Value.last > 120f) _favPrune.Add(kv.Key);
+                for (int i = 0; i < _favPrune.Count; i++) _favSalvos.Remove(_favPrune[i]);
+            }
+            for (int i = _recentTargets.Count - 1; i >= 0; i--) if (_recentTargets[i].until < now) _recentTargets.RemoveAt(i);
+        }
+
         static void Logic(GameController gc, int myTeam)
         {
             if (_byUid.Count == 0) return;
@@ -1570,33 +2018,44 @@ namespace RealismOverhaul
             if (cmd == null) return;
             int enemyTeam = myTeam == 0 ? 1 : 0;
             float now = GameNow;
-            _recentTargets.RemoveAll(t => t.until < now);
+            FavResetCounters();
+            FavPrune(now);
+            RefreshFriendPos(myTeam, now);                                   // one map read a second, shared by the CB pass and the FAV pass
             bool cbUpdated = false;
-            VisResult vis = null;
+            VisResult eyeVis = null;                                         // read once, and only if a counter-battery salvo really leaves
+            _favPieces.Clear();
 
-            foreach (var kv in _byUid.ToList())
+            // copy of the armed UIDs: the pass gives several orders and the player may switch a button during it
+            _favUids.Clear();
+            foreach (var kv in _byUid) if ((kv.Value & (Opt.CB | Opt.FAW)) != 0) _favUids.Add(kv.Key);
+
+            // ---------------- passe 1 : contre-batterie tout de suite, pièces en feu à volonté mises de côté
+            for (int i = 0; i < _favUids.Count; i++)
             {
-                int uid = kv.Key; var opt = kv.Value;
-                if ((opt & (Opt.CB | Opt.FAW)) == 0) continue;
-                string tag = (opt & Opt.FAW) != 0 ? ((opt & Opt.CB) != 0 ? "FAV+CB" : "FAV") : "CB";
+                int uid = _favUids[i];
+                if (!_byUid.TryGetValue(uid, out var opt) || (opt & (Opt.CB | Opt.FAW)) == 0) continue;
+                bool fav = (opt & Opt.FAW) != 0;
+                string tag = fav ? ((opt & Opt.CB) != 0 ? "FAV+CB" : "FAV") : "CB";
+                if (fav) _cPieces++;
                 if (!_mineByUid.TryGetValue(uid, out var u) || u == null)
                 {
+                    if (fav) _cDead++;
                     if (_missingLogged.Add(uid)) Log($"{tag} uid {uid} : pièce armée absente de tes unités (détruite, embarquée ou passée à un autre joueur)");
                     continue;
                 }
                 _missingLogged.Remove(uid);
                 try
                 {
-                    if (!u.IsAlive()) continue;
-                    if (_fireJobs.TryGetValue(uid, out var job) && !job.Accepted && !job.Refused) { Why(uid, tag, u, "ordre de tir en attente de confirmation"); continue; }
-                    if (!u.IsIdle()) { Why(uid, tag, u, "pas inactive (ordre ou tir en cours)"); continue; }
-                    if (_nextShot.TryGetValue(uid, out var next) && now < next) { Why(uid, tag, u, $"délai {next - now:0} s avant la prochaine salve"); continue; }
+                    if (!u.IsAlive()) { if (fav) _cDead++; continue; }
+                    if (_fireJobs.TryGetValue(uid, out var job) && !job.Accepted && !job.Refused) { if (fav) _cPending++; Why(uid, tag, u, "ordre de tir en attente de confirmation"); continue; }
+                    if (!u.IsIdle()) { if (fav) _cNotIdle++; Why(uid, tag, u, "pas inactive (ordre ou tir en cours)"); continue; }
+                    if (_nextShot.TryGetValue(uid, out var next) && now < next) { if (fav) _cCooldown++; Why(uid, tag, u, $"délai {next - now:0} s avant la prochaine salve"); continue; }
                     int ammo = 100;
                     try { ammo = u.GetAmmoPercentage(true, false); } catch { }
-                    if (ammo < _minAmmo.Value) { Why(uid, tag, u, $"munitions {ammo}% sous le minimum {_minAmmo.Value}%"); continue; }
+                    if (ammo < _minAmmo.Value) { if (fav) _cAmmo++; Why(uid, tag, u, $"munitions {ammo}% sous le minimum {_minAmmo.Value}%"); continue; }
                     float range = RangeOf(u, out var minRange, out bool longRange);
-                    if (range <= 0) { Why(uid, tag, u, "portée 0 (aucun obus d'artillerie connu pour cette unité)"); continue; }
-                    if (longRange && !_longRange.Value) { Why(uid, tag, u, "missiles longue portée exclus (option ArtillerieLonguePortee)"); continue; }
+                    if (range <= 0) { if (fav) _cRange++; Why(uid, tag, u, "portée 0 (aucun obus d'artillerie connu pour cette unité)"); continue; }
+                    if (longRange && !_longRange.Value) { if (fav) _cLongExcl++; Why(uid, tag, u, "missiles longue portée exclus (option ArtillerieLonguePortee)"); continue; }
                     // targets are only taken inside [minimum range, range] of the CURRENT position: the fire order never needs the piece to move
                     var pos = u.GetPosition();
                     string cbWhy = null;
@@ -1612,23 +2071,43 @@ namespace RealismOverhaul
                             foreach (var s in _cbSpots)
                             {
                                 float d = V3.Distance(pos, s.Pos);
-                                if (d > range || d < Math.Max(80f, minRange) || Blacklisted(uid, d)) continue;
+                                if (d > range || d < Math.Max(80f, minRange) || Blacklisted(uid, d, now)) continue;
                                 cbIn++;
-                                if (now - s.LastSalvo < _cbInterval.Value) continue;
+                                if (now < s.SilentUntil) continue;                        // point beaten blind for nothing: left alone for a while
+                                if (now - s.LastSalvo < _cbInterval.Value + s.Hold) continue;
                                 // keep adjusting a battery already under fire before opening on a new one, then the nearest
                                 if (spot == null || s.Salvos > spot.Salvos || (s.Salvos == spot.Salvos && d < sd)) { spot = s; sd = d; }
                             }
                             if (spot != null)
                             {
-                                float err = _cbFirstError.Value * (float)Math.Pow(0.5, spot.Salvos);
-                                if (err < 15f) err = 0f;
-                                if (FireOwn(cmd, u, uid, pos, spot.Pos, err, range, minRange, "CB", now))
+                                // CB is the textbook unobserved fire: the point comes from a detection of muzzle flashes, not from a sight.
+                                // With the rule on, it stays wide as long as the player sends nobody to look, and recovers in two salvoes
+                                // as soon as a drone flies over the battery.
+                                int cls = 1, eyeUid = 0; float eyeDist = 0f, err;
+                                if (EyeOn)
+                                {
+                                    if (eyeVis == null) eyeVis = SpottedInfo(gc, enemyTeam);   // cached 1 s by Visibility, read only when a salvo leaves
+                                    cls = Oeil(spot.Pos, eyeVis, out eyeUid, out eyeDist);
+                                    err = Ecart(cls, sd, spot.Salvos);
+                                }
+                                else
+                                {
+                                    err = _cbFirstError.Value * (float)Math.Pow(0.5, spot.Salvos);
+                                    if (err < 15f) err = 0f;
+                                }
+                                if (FireOwn(cmd, u, uid, pos, spot.Pos, err, range, minRange, "CB", now, out float errUsed))
                                 {
                                     // the battery is reserved now; the salvo only counts (tighter next salvo) once the game accepts the order
-                                    if (_fireJobs.TryGetValue(uid, out var fj)) { fj.Spot = spot; fj.SpotPrevLast = spot.LastSalvo; }
+                                    if (_fireJobs.TryGetValue(uid, out var fj)) { fj.Spot = spot; fj.SpotPrevLast = spot.LastSalvo; fj.Blind = cls == 0; }
                                     spot.LastSalvo = now;
+                                    // soft brake: a blind battery is shelled half as often, it is never forbidden
+                                    // "deux fois moins vite" really means twice the interval: Hold is ADDED to it, so it must be a
+                                    // whole interval, not half of one (the feu à volonté already does cool *= 2f).
+                                    spot.Hold = cls == 0 && EyeOn && _eyeBrake.Value ? _cbInterval.Value : 0f;
                                     _nextShot[uid] = now + _cbCooldown.Value;
-                                    Log($"{u.Name} (uid {uid}) : contre-batterie salve {spot.Salvos + 1} ordonnée à {sd:0} m, écart {err:0} m{(err <= 0f ? " (pile dessus)" : "")}");
+                                    ArmGuard();
+                                    Log($"[contre-batterie] {u.Name} (uid {uid}) : salve {spot.Salvos + 1} ordonnée à {sd:0} m, écart {errUsed:0} m{(errUsed <= 0f ? " (pile dessus)" : "")}{(EyeOn ? $" (œil : {EyeName(cls)}{EyeWho(eyeUid, eyeDist)})" : "")}");
+                                    if (cls == 0 && EyeOn) NotifyBlindOnce();
                                     continue;
                                 }
                             }
@@ -1636,38 +2115,214 @@ namespace RealismOverhaul
                         }
                     }
 
-                    // FAV: enemies spotted by my team (me or my allies), one short salvo per target, pieces spread over the targets
-                    if ((opt & Opt.FAW) == 0) { if (cbWhy != null) Why(uid, tag, u, cbWhy); continue; }
-                    vis ??= SpottedInfo(gc, enemyTeam, true);
-                    string tail = cbWhy != null ? " | " + cbWhy : "";
-                    if (!vis.Usable) { Why(uid, tag, u, $"{vis.Enemies} ennemis, visibilité inutilisable (source {vis.Source}) : aucun tir{tail}"); continue; }
-                    bool valuableOnly = longRange && _longRangeValuable.Value;   // pure missile launchers: every spotted ground target unless the pref asks for valuable ones only
-                    int nGround = 0, nIn = 0, nRecent = 0, nBlack = 0;
-                    V3 target = V3.zero; float fd = float.MaxValue; bool found = false;
-                    foreach (var s in vis.Units)
+                    // FAV: the piece is free, it goes to the pairing pass (it fires there, never here)
+                    if (!fav) { if (cbWhy != null) Why(uid, tag, u, cbWhy); continue; }
+                    if (_favPieces.Count >= FAV_MAX)
                     {
-                        if (s.role < 0 || (valuableOnly && !IsHighValue(s.role))) continue;
-                        nGround++;
-                        float d = V3.Distance(pos, s.pos);
-                        if (d > range || d < Math.Max(80f, minRange)) continue;
-                        nIn++;
-                        if (Blacklisted(uid, d)) { nBlack++; continue; }
-                        if (RecentlyTargeted(s.pos)) { nRecent++; continue; }
-                        if (d < fd) { fd = d; target = s.pos; found = true; }
-                    }
-                    if (!found)
-                    {
-                        Why(uid, tag, u, $"{vis.Enemies} ennemis, {vis.Units.Count} repérés (source {vis.Source}), {nGround} cible(s) au sol{(valuableOnly ? " de valeur" : "")}, {nIn} dans [{minRange:0},{range:0}] m{(nRecent > 0 ? $", {nRecent} déjà visée(s)" : "")}{(nBlack > 0 ? $", {nBlack} interdite(s) (la pièce avait bougé)" : "")}{tail}");
+                        if (!_favFullLogged) { _favFullLogged = true; Log($"feu à volonté : plus de {FAV_MAX} pièces prêtes dans la même passe, les suivantes tireront à la passe d'après"); }
                         continue;
                     }
-                    if (!FireOwn(cmd, u, uid, pos, target, 0f, range, minRange, "FAV", now)) continue;
-                    _nextShot[uid] = now + (longRange ? _fawCooldown.Value * 3 : _fawCooldown.Value);
-                    _recentTargets.Add((target, now + 30f));                   // reserved at once so other pieces spread; released if the order is refused
-                    if (_fireJobs.TryGetValue(uid, out var favJob)) favJob.FavReserved = true;
-                    Log($"{u.Name} (uid {uid}) : feu à volonté à {fd:0} m (source {vis.Source}, {nIn} cible(s) à portée)");
+                    _cReady++;
+                    _favPieces.Add(new FavPiece
+                    {
+                        Uid = uid, U = u, Pos = pos, Ammo = ammo,
+                        Range = range, Min = Math.Max(80f, minRange), MinRaw = minRange,
+                        Long = longRange, ValuableOnly = longRange && _longRangeValuable.Value,
+                        Tag = tag, CbWhy = cbWhy,
+                    });
                 }
                 catch (Exception e) { Warn("logic" + uid, $"artillerie uid {uid}: {e.Message}"); }
             }
+
+            // ---------------- passe 2 : répartition des pièces prêtes sur les ennemis repérés
+            VisResult vis = null;
+            if (_favPieces.Count > 0 && _favArmed)
+            {
+                vis = SpottedInfo(gc, enemyTeam, true);
+                try { FavAssign(cmd, vis, now); }
+                catch (Exception e)
+                {
+                    if (++_favErrors >= 20)
+                    {
+                        _favArmed = false;
+                        Log("feu à volonté : trop d'erreurs de répartition, la fonction est coupée jusqu'à la fin de la bataille (la contre-batterie continue)");
+                    }
+                    Warn("favrep", "feu à volonté : répartition impossible : " + e.Message);
+                }
+            }
+            FavReport(vis, now);
+        }
+
+        /// One piece per enemy: the nearest suitable pair first, then the next, up to FeuAVolonteSalvesParPasse orders in the same pass.
+        /// Distances use the same measure as FireOwn, so a paired target is always inside [minimum range, range] of the piece WHERE IT STANDS:
+        /// the mod never has to move the player's artillery, and FireOwn still refuses anything outside that window.
+        static void FavAssign(EcsEventBus.CommandsBus cmd, VisResult vis, float now)
+        {
+            int np = _favPieces.Count;
+            _cTargets = vis.Units.Count;
+            if (!vis.Usable)
+            {
+                for (int p = 0; p < np; p++)
+                {
+                    var fp = _favPieces[p];
+                    Why(fp.Uid, fp.Tag, fp.U, $"{vis.Enemies} ennemis, visibilité inutilisable (source {vis.Source}) : aucun tir{(fp.CbWhy != null ? " | " + fp.CbWhy : "")}");
+                }
+                return;
+            }
+
+            bool spread = FavSpreadOn;
+
+            // targets free this pass: on the ground, not reserved by another piece a moment ago
+            _favTgtIdx.Clear();
+            for (int t = 0; t < vis.Units.Count; t++)
+            {
+                var s = vis.Units[t];
+                if (s.role < 0) continue;                                    // aircraft and helicopters: artillery cannot hit them
+                _cGround++;
+                if (_favTargetNext.TryGetValue(s.uid, out var until) && now < until) { _cTgtCooldown++; continue; }
+                // la réserve de zone de 150 m vaut AUSSI avec la répartition : sans elle, plusieurs pièces pilonnent le même paquet
+                if (RecentlyTargeted(s.pos)) { _cTgtCooldown++; continue; }
+                if (_favTgtIdx.Count >= FAV_MAX) break;
+                _favTgtIdx.Add(t);
+            }
+            int nt = _cUsable = _favTgtIdx.Count;
+
+            // observation class of every free target, computed ONCE for the whole pass: it serves both the pairing and the firing error
+            bool eye = EyeOn;
+            for (int t = 0; t < nt; t++)
+            {
+                int cl = 1, who = 0; float far = 0f;
+                if (eye) cl = Oeil(vis.Units[_favTgtIdx[t]].pos, vis, out who, out far, vis.Units[_favTgtIdx[t]].uid);
+                _favTgtEye[t] = (byte)cl; _favTgtEyeUid[t] = who; _favTgtEyeDist[t] = far;
+            }
+            // sorting only: at equal range the pairing puts a watched target before a blind one. Nothing is ever forbidden.
+            float blindPen = eye && _eyeBrake.Value ? EYE_BLIND_PENALTY : 0f;
+
+            for (int p = 0; p < np; p++) _favPick[p] = -1;
+            for (int t = 0; t < nt; t++) { _favTgtUsed[t] = false; _favTgtWhy[t] = 0; }
+
+            // how many orders this pass: the option caps them, and the escape hatch goes back to one salvo at a time
+            int maxAssign = spread ? (_favMaxPerTick.Value <= 0 ? np : Math.Min(np, _favMaxPerTick.Value)) : 1;
+            if (maxAssign > nt) maxAssign = nt;
+            int paired = 0;
+
+            // une seule matrice pour toute la passe : ni les pièces ni les cibles ne bougent entre deux tours, donc chaque paire n'est
+            // regardée (et sa racine carrée calculée) qu'une fois. Les tours ne font plus que relire cette matrice.
+            for (int p = 0; p < np; p++)
+            {
+                var fp = _favPieces[p];
+                int b = p * FAV_MAX;
+                for (int t = 0; t < nt; t++)
+                {
+                    var s = vis.Units[_favTgtIdx[t]];
+                    byte why;
+                    float d = -1f;
+                    if (fp.ValuableOnly && !IsHighValue(s.role)) why = 1;
+                    else
+                    {
+                        d = V3.Distance(fp.Pos, s.pos);
+                        if (d > fp.Range || d < fp.Min) { why = 2; d = -1f; }
+                        else if (Blacklisted(fp.Uid, d, now)) { why = 3; d = -1f; }
+                        else why = 4;
+                    }
+                    // la matrice porte la CLÉ DE TRI (distance + pénalité du tir aveugle), jamais la distance employée pour l'ordre :
+                    // celle-ci est recalculée au moment du tir, donc la garde de portée reste faite sur la vraie distance.
+                    _favD[b + t] = d < 0f ? -1f : d + (blindPen > 0f && _favTgtEye[t] == 0 ? blindPen : 0f);
+                    if (why > _favTgtWhy[t]) _favTgtWhy[t] = why;     // la meilleure raison de chaque cible est gardée
+                }
+            }
+
+            for (int round = 0; round < maxAssign; round++)
+            {
+                int bp = -1, bt = -1; float bd = float.MaxValue;
+                for (int p = 0; p < np; p++)
+                {
+                    if (_favPick[p] >= 0) continue;
+                    int b = p * FAV_MAX;
+                    for (int t = 0; t < nt; t++)
+                    {
+                        if (_favTgtUsed[t]) continue;
+                        float d = _favD[b + t];
+                        if (d < 0f) continue;
+                        if (d < bd) { bd = d; bp = p; bt = t; }
+                    }
+                }
+                if (bp < 0) break;
+                _favPick[bp] = bt; _favTgtUsed[bt] = true; _favOrder[paired++] = bp;
+                // deux salves à moins de 150 m l'une de l'autre, c'est le même paquet d'ennemis : les cibles voisines sortent de la passe
+                var pris = vis.Units[_favTgtIdx[bt]];
+                for (int t2 = 0; t2 < nt; t2++)
+                    if (!_favTgtUsed[t2] && (vis.Units[_favTgtIdx[t2]].pos - pris.pos).sqrMagnitude < 150f * 150f) { _favTgtUsed[t2] = true; _cTropPres++; }
+            }
+
+            for (int t = 0; t < nt; t++)
+                switch (_favTgtWhy[t]) { case 1: _cValuable++; break; case 2: _cOutOfRange++; break; case 3: _cBlack++; break; }
+
+            // ---------------- les ordres, la paire la plus proche d'abord (le tir le plus sûr part en premier)
+            for (int k = 0; k < paired; k++)
+            {
+                int p = _favOrder[k];
+                var fp = _favPieces[p];
+                var s = vis.Units[_favTgtIdx[_favPick[p]]];
+                float d = V3.Distance(fp.Pos, s.pos);
+                // the FAV only fires at enemies your side has really spotted, so it is nearly always class >= 1: it does not become bad,
+                // it just loses its divine accuracy on the FIRST salvo against something seen from very far away.
+                int cls = _favTgtEye[_favPick[p]];
+                int salvos = SalvesSur(s.uid);
+                float err = eye ? Ecart(cls, d, salvos) : 0f;
+                if (!FireOwn(cmd, fp.U, fp.Uid, fp.Pos, s.pos, err, fp.Range, fp.MinRaw, "FAV", now, out float errUsed)) { _cRefused++; continue; }
+                float cool = FavCooldown(fp.Ammo, fp.Long);
+                if (cls == 0 && blindPen > 0f) cool *= 2f;                   // soft brake: blind fire is half as fast, never forbidden
+                _nextShot[fp.Uid] = now + cool;
+                _favTargetNext[s.uid] = now + _favTargetCooldown.Value;      // the ENEMY is reserved, not a circle on the ground
+                _recentTargets.Add((s.pos, now + 30f));                      // et la zone autour de lui, répartition ou pas
+                if (_fireJobs.TryGetValue(fp.Uid, out var fj)) { fj.FavTargetUid = s.uid; fj.Blind = cls == 0; }   // released if the game refuses the order
+                _cAssigned++;
+                ArmGuard();
+                string name = "?"; try { name = fp.U.Name; } catch { }
+                Log($"[feu à volonté] {name} (uid {fp.Uid}) -> ennemi uid {s.uid} à {d:0} m (source {vis.Source}, {nt} cible(s) libre(s), munitions {fp.Ammo} %{(eye ? $", œil : {EyeName(cls)}{EyeWho(_favTgtEyeUid[_favPick[p]], _favTgtEyeDist[_favPick[p]])}, écart {errUsed:0} m, salve {salvos + 1}" : "")})");
+                if (cls == 0 && eye) NotifyBlindOnce();
+            }
+
+            // one line per piece left without a target, with what the pass really saw
+            for (int p = 0; p < np; p++)
+            {
+                if (_favPick[p] >= 0) continue;
+                var fp = _favPieces[p];
+                Why(fp.Uid, fp.Tag, fp.U, $"{vis.Enemies} ennemis, {vis.Units.Count} repérés (source {vis.Source}), {_cGround} au sol, {nt} libre(s), aucune dans [{fp.Min:0},{fp.Range:0}] m pour cette pièce" +
+                    $"{(_cTgtCooldown > 0 ? $" ({_cTgtCooldown} déjà réservée(s) par une autre pièce)" : "")}{(fp.ValuableOnly ? " (missiles seuls : cibles de valeur uniquement)" : "")}{(fp.CbWhy != null ? " | " + fp.CbWhy : "")}");
+            }
+        }
+
+        /// The one compact line that tells, in the shared log, what the artillery did this pass and why.
+        /// Never named "relevé": that word sends a line back through the 5-minute limit of the PUBLIC log (ModLog.cs).
+        static void FavReport(VisResult vis, float now)
+        {
+            bool salvo = _cAssigned > 0 || _cRefused > 0;
+            if (!salvo && (_cPieces == 0 || now < _favNextReport)) return;
+            _favNextReport = now + (_cReady > 0 ? 10f : 60f);
+            var sb = _favSb;
+            sb.Clear();
+            sb.Append("artillerie : pièces en feu à volonté ").Append(_cPieces).Append(" (prêtes ").Append(_cReady)
+              .Append(" ; écartées : pas inactive ").Append(_cNotIdle).Append(", délai ").Append(_cCooldown)
+              .Append(", munitions ").Append(_cAmmo).Append(", portée 0 ").Append(_cRange)
+              .Append(", longue portée exclue ").Append(_cLongExcl).Append(", ordre en attente ").Append(_cPending)
+              .Append(", absente ").Append(_cDead).Append(')');
+            if (!_favArmed) sb.Append(" ; répartition coupée (trop d'erreurs)");
+            else if (!FavSpreadOn) sb.Append(" ; répartition désactivée (une seule pièce par passe)");
+            if (vis == null) sb.Append(_cReady > 0 ? " ; cibles non cherchées cette passe" : " ; visibilité non consultée (aucune pièce prête)");
+            else if (!vis.Usable) sb.Append(" ; visibilité inutilisable (source ").Append(vis.Source).Append(')');
+            else
+                sb.Append(" ; ennemis repérés ").Append(_cTargets).Append(" (source ").Append(vis.Source)
+                  .Append(", au sol ").Append(_cGround).Append(", déjà réservés ").Append(_cTgtCooldown)
+                  .Append(", libres ").Append(_cUsable).Append(", hors portée ").Append(_cOutOfRange)
+                  .Append(", tranche interdite ").Append(_cBlack).Append(", pas de valeur ").Append(_cValuable)
+                  .Append(", trop près d'une salve de la même passe ").Append(_cTropPres).Append(')');
+            sb.Append(" ; salves ordonnées ").Append(_cAssigned).Append(" ; ordres refusés ").Append(_cRefused);
+            if (_eyeOn == null || !_eyeOn.Value) sb.Append(" ; règle des observateurs coupée (réglage)");
+            else if (!_eyeArmed) sb.Append(" ; règle des observateurs coupée (trop d'erreurs)");
+            else sb.Append(" ; observateurs : ").Append(_eyes.Count).Append(" unité(s) à toi dans l'instantané de vue");
+            Log(sb.ToString());
         }
 
         /// Point fire order with the ammo type chosen from the loadout (used by EnemyAi for the bots' artillery too; no watchdog there).
@@ -1694,6 +2349,8 @@ namespace RealismOverhaul
                 d.GroupName = "";
                 d.Blocking = false;
                 d.Queue = false;
+                // the mod is ordering, not the player: skip the crew acknowledgement for this one order (SilenceOrdres.cs)
+                try { SilenceOrdres.Marquer(u.Entity.EntityId); } catch { }
                 cmd.FireMissionPointTarget.Invoke(d, out resolved);
                 viaBus = true;
                 float fromPiece = -1f;
@@ -1715,7 +2372,8 @@ namespace RealismOverhaul
             public LuaUnit U; public string Name, Kind; public V3 P0, Target;
             public float T0, TOrder, Err, Range, Min, Dist; public AmmoTypeEnum Ammo; public bool Retried, Accepted, Refused;
             public CbSpot Spot; public float SpotPrevLast;                   // CB: battery reserved by this order (salvo counted only once accepted)
-            public bool FavReserved;                                        // FAV: target reserved in _recentTargets (released if refused)
+            public int FavTargetUid;                                        // FAV: enemy UID reserved by this order, 0 = none (released if refused)
+            public bool Blind;                                               // nobody of yours watched the area when the order left
         }
 
         /// Game time for the artillery logic: follows pause and game speed (the real clock would let the safety windows expire during a pause).
@@ -1728,26 +2386,95 @@ namespace RealismOverhaul
 
         /// Automatic order for one of the player's own pieces: never beyond the computed range, then followed by WatchFire
         /// (acceptance within 2 s, one retry with the other ammo type, 15 s movement watchdog).
-        static bool FireOwn(EcsEventBus.CommandsBus cmd, LuaUnit u, int uid, V3 pos, V3 target, float err, float range, float min, string kind, float now)
+        ///
+        /// FIRE SAFETY — the mod NEVER lets the player's artillery travel. The error radius is consumed when the order is built:
+        /// it MOVES the aim point. An error that pushes that point past the piece's own range gives the engine a reason to close
+        /// the range itself, that is, to drive the piece forward. Two layers stop that:
+        ///   1. the error budget: the error is cut back so the aim point always stays inside [minimum range, range] of the piece
+        ///      WHERE IT STANDS, with a margin. The error is cut back, the order is NEVER refused: a piece at the edge of its
+        ///      range fires straight at the point instead of firing wide. No shot is ever lost to this rule.
+        ///   2. the point the game really kept: outside that window the order is cancelled on the spot.
+        /// Layer 3 is WatchFire, unchanged.
+        /// errUsed = the error radius really sent, for the log line of the caller.
+        static bool FireOwn(EcsEventBus.CommandsBus cmd, LuaUnit u, int uid, V3 pos, V3 target, float err, float range, float min, string kind, float now, out float errUsed)
         {
+            errUsed = err;
             float dist = V3.Distance(pos, target);
-            if (dist > range || dist < Math.Max(80f, min))
+            float low = Math.Max(80f, min);
+            if (dist > range || dist < low)
             {
                 Warn("hors" + uid, $"{kind} uid {uid} : cible à {dist:0} m hors de [{min:0}, {range:0}] m, aucun ordre");
                 return false;
             }
+            // ---- layer 0: FRIENDLY SAFETY. The error MOVES the aim point, so a wide blind salvo could sit on my own troops (or on
+            // a scripted ally a "protect" stage needs alive). Blind fire may ask for up to 400 m and the counter-battery spot list
+            // only keeps points 300 m away from my units; the "feu à volonté" side had no margin at all. The error is cut back to the
+            // room really available, never the order: a piece next to friendly troops fires straight at the point instead of firing wide.
+            if (err > 0f && _friendPos.Count > 0)
+            {
+                float safe = NearestDist(_friendPos, target) - EYE_FRIEND_SAFE;
+                if (err > safe)
+                {
+                    float kept = safe > 1f ? safe : 0f;
+                    Log($"{kind} uid {uid} : écart rogné de {err:0} à {kept:0} m — unité à toi à {(safe + EYE_FRIEND_SAFE):0} m du point visé");
+                    err = kept;
+                }
+            }
+            // ---- layer 1: the error budget (what the error may bite on either side of the target, inside the range window)
+            if (err > 0f)
+            {
+                float margin = _rangeMargin != null ? Math.Max(0f, _rangeMargin.Value) : 50f;
+                float room = Math.Min(range - margin - dist, dist - low - margin);
+                if (err > room)
+                {
+                    float kept = room > 1f ? room : 0f;
+                    Log($"{kind} uid {uid} : écart rogné de {err:0} à {kept:0} m pour rester dans la portée ({range:0} m) — la pièce ne bouge pas");
+                    err = kept;
+                }
+            }
+            errUsed = err;
             var ammo = AmmoTypeOf(u);
             if (!FireCore(cmd, u, target, err, ammo, out var resolved, out bool viaBus)) return false;
             string name = "?"; try { name = u.Name; } catch { }
             _fireJobs[uid] = new FireJob { U = u, Name = name, Kind = kind, P0 = pos, Target = target, T0 = now, TOrder = now, Err = err, Range = range, Min = min, Dist = dist, Ammo = ammo };
+            // ---- layer 2: the point the game really kept
             if (viaBus && resolved.sqrMagnitude > 1f)
             {
                 float rd = V3.Distance(pos, resolved);
-                if (rd > range + 20f || rd < Math.Max(80f, min) - 20f)
-                    Log($"{kind} {name} (uid {uid}) : ATTENTION point retenu par le jeu à {rd:0} m, hors de [{min:0}, {range:0}] m (pièce surveillée 15 s)");
+                if (rd > range + 20f || rd < low - 20f)
+                {
+                    if (!_keptHard)
+                    {
+                        Log($"{kind} {name} (uid {uid}) : ATTENTION point retenu par le jeu à {rd:0} m, hors de [{min:0}, {range:0}] m (pièce surveillée 15 s)");
+                        return true;
+                    }
+                    CancelOne(cmd, uid, "portee" + uid);
+                    // the job is KEPT, marked as refused: no retry with the other ammo type, but WatchFire goes on watching the piece
+                    // for 15 s, so a piece that would move anyway (a cancel the game ignores) is still caught and stopped
+                    if (_fireJobs.TryGetValue(uid, out var cj)) { cj.Refused = true; cj.Err = 0f; }
+                    // same graduated rule as the movement watchdog: watched the first time, band forbidden from the second one
+                    long key = BandKey(uid, dist);
+                    int n = _creeps.TryGetValue(key, out var c) ? c + 1 : 1;
+                    _creeps[key] = n;
+                    int band = (int)(dist / BAND);
+                    if (n >= 2) _blacklist[key] = now + BAN;
+                    _nextShot[uid] = now + Math.Max(10f, _cbCooldown.Value);          // never order-then-cancel in a loop
+                    Log($"{kind} {name} (uid {uid}) : point retenu par le jeu à {rd:0} m, hors de [{min:0}, {range:0}] m : ordre annulé tout de suite, la pièce ne bouge pas" +
+                        $"{(n >= 2 ? $" ; tranche {band * BAND:0}-{(band + 1) * BAND:0} m interdite pour cette pièce pendant {BAN:0} s" : " ; tranche surveillée (1re fois)")}");
+                    if (++_keptOut >= KEPT_MAX)
+                    {
+                        _keptHard = false;
+                        Log($"artillerie : {_keptOut} points retenus hors de portée dans cette bataille, l'annulation automatique est coupée jusqu'à la fin (le contrôle de portée avant l'ordre et le chien de garde de déplacement restent actifs)");
+                    }
+                    return false;
+                }
             }
             return true;
         }
+
+        const int KEPT_MAX = 8;                                              // kill-switch of layer 2: past this, only the warning is kept
+        static int _keptOut;
+        static bool _keptHard = true;
 
         /// Every 0.25 s while orders are followed (game time, frozen during a pause): accepted when the piece stops being idle within 2 s (else one
         /// retry with the other ammo type). Until the salvo is over (15 s at most), a move of more than 5 m TOWARD the target (the game closing
@@ -1776,12 +2503,29 @@ namespace RealismOverhaul
                         if (moved > 5f)
                         {
                             float closed = Flat(j.P0, j.Target) - Flat(p, j.Target);
-                            if (closed >= 0.8f * moved)
+                            // a move the MISSION SCRIPT asked for is not the mod closing the range: cancelling it would stop the stage
+                            // waiting for that arrival. The mod only ends its watch and says so. Unreadable script state = cancel, as before.
+                            bool parScript = false;
+                            try { parScript = Missions.ScriptReason(uid, now) != null; } catch { parScript = false; }
+                            if (parScript)
                             {
+                                Log($"{j.Kind} {j.Name} (uid {uid}) : déplacement de {moved:0} m demandé par le script de mission : surveillance arrêtée, rien annulé");
+                            }
+                            else if (closed >= 0.8f * moved)
+                            {
+                                // the piece is stopped at once, every time: the mod never lets the player's artillery travel
                                 CancelOne(cmd, uid, "watch");
                                 int band = (int)(j.Dist / BAND);
-                                _blacklist.Add(BandKey(uid, j.Dist));
-                                Log($"{j.Kind} {j.Name} (uid {uid}) s'est rapprochée de la cible de {closed:0} m après l'ordre automatique (cible à {j.Dist:0} m) : ordre annulé ; tranche {band * BAND:0}-{(band + 1) * BAND:0} m interdite pour cette pièce jusqu'à la fin de la bataille");
+                                long key = BandKey(uid, j.Dist);
+                                int n = _creeps.TryGetValue(key, out var c) ? c + 1 : 1;
+                                _creeps[key] = n;
+                                if (n >= 2 || closed >= 25f)
+                                {
+                                    _blacklist[key] = now + BAN;
+                                    Log($"{j.Kind} {j.Name} (uid {uid}) s'est rapprochée de la cible de {closed:0} m après l'ordre automatique (cible à {j.Dist:0} m) : ordre annulé ; tranche {band * BAND:0}-{(band + 1) * BAND:0} m interdite pour cette pièce pendant {BAN:0} s ({n}e rapprochement)");
+                                }
+                                else
+                                    Log($"{j.Kind} {j.Name} (uid {uid}) s'est rapprochée de la cible de {closed:0} m après l'ordre automatique (cible à {j.Dist:0} m) : ordre annulé ; tranche {band * BAND:0}-{(band + 1) * BAND:0} m surveillée (1er rapprochement, interdite au suivant)");
                             }
                             else Log($"{j.Kind} {j.Name} (uid {uid}) : déplacement de {moved:0} m qui ne vise pas la cible (ordre du joueur) : surveillance arrêtée, rien annulé");
                             end = true;
@@ -1799,7 +2543,20 @@ namespace RealismOverhaul
                             if (!idle)
                             {
                                 j.Accepted = true;
-                                if (j.Spot != null) j.Spot.Salvos++;                       // the next CB salvo on this battery is tighter only after a real one
+                                if (j.Spot != null)
+                                {
+                                    j.Spot.Salvos++;                                       // the next CB salvo on this battery is tighter only after a real one
+                                    if (j.Blind) j.Spot.BlindSalvos++; else j.Spot.BlindSalvos = 0;
+                                    // hard brake (off by default): emptying the magazine on a ghost battery nobody can see
+                                    if (_eyeSilence != null && _eyeSilence.Value && j.Spot.BlindSalvos >= EYE_BLIND_MAX && now >= j.Spot.SilentUntil)
+                                    {
+                                        j.Spot.SilentUntil = now + EYE_SILENCE;
+                                        j.Spot.BlindSalvos = 0;
+                                        Log($"[contre-batterie] {j.Name} (uid {uid}) : {EYE_BLIND_MAX} salves aveugles sur la même position sans rien y repérer, ce point est laissé tranquille {EYE_SILENCE:0} s (envoie un œil pour reprendre)");
+                                    }
+                                }
+                                // the observer rule tightens salvo after salvo only once a salvo has really left
+                                if (j.FavTargetUid != 0) BumpFavSalvo(j.FavTargetUid, now);
                                 Log($"{j.Kind} {j.Name} (uid {uid}) : ordre accepté ({j.Ammo}), pièce active après {now - j.TOrder:0.0} s");
                             }
                             else if (now - j.TOrder >= 2f)
@@ -1816,7 +2573,8 @@ namespace RealismOverhaul
                                     j.Refused = true;
                                     // release the reservations made when the order was sent
                                     if (j.Spot != null) j.Spot.LastSalvo = j.SpotPrevLast;
-                                    if (j.FavReserved) { var tp = j.Target; _recentTargets.RemoveAll(t => (t.pos - tp).sqrMagnitude < 1f); }
+                                    _nextShot.Remove(uid);                     // la pièce n'a pas tiré un obus : elle ne reste pas écartée pour rien
+                                    if (j.FavTargetUid != 0) { _favTargetNext.Remove(j.FavTargetUid); ForgetRecent(j.Target); }
                                     int ammoPct = -1;
                                     try { ammoPct = j.U.GetAmmoPercentage(true, false); } catch { }
                                     Log($"{j.Kind} {j.Name} (uid {uid}) : tir refusé, la pièce reste inactive{(j.Retried ? " avec les deux types de munition" : "")} (cible à {j.Dist:0} m dans [{j.Min:0}, {j.Range:0}] m, munitions {ammoPct}%)");
@@ -1871,11 +2629,16 @@ namespace RealismOverhaul
                     var ai = GameConfig.Instance?.AiConfig;
                     var bs = GameConfig.Instance?.BattleSystemSettings;
                     int n = 0;
-                    if (ai != null) { n += Realism.SetJournaled(ai, "ChanceFireCounterBattery", 1f); n += Artillery.TunePreset(ai); }   // F3 (EnemyAi.cs)
+                    // ChanceFireCounterBattery is a PERCENT (vanilla 100), not a 0-1 ratio: writing 1f used to cut enemy
+                    // counter-battery from 100 % down to 1 %, the exact opposite of what this line is for.
+                    if (ai != null) { n += Realism.SetJournaled(ai, "ChanceFireCounterBattery", 100f); n += Artillery.TunePreset(ai); }   // F3 (EnemyAi.cs)
                     if (bs != null)
                     {
-                        n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_DIFFICULTY_CHANCE_EASY", 1f);
-                        n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_DIFFICULTY_CHANCE_MEDIUM", 1f);
+                        // The AI's chance to pop smoke when engaged is the ONE thing this game changes between difficulty levels
+                        // (vanilla 0.25 / 0.5 / 0.75). Writing 1 everywhere, as this did, flattened the three levels into one. The
+                        // levels are given back their gradient, raised so that even on Easy a crew reacts like a real crew.
+                        n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_DIFFICULTY_CHANCE_EASY", 0.5f);
+                        n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_DIFFICULTY_CHANCE_MEDIUM", 0.75f);
                         n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_DIFFICULTY_CHANCE_HARD", 1f);
                         n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_TRIGGER_BY_GUNS", true);
                         n += Realism.SetJournaled(bs, "AUTOSMOKE_AI_TRIGGER_BY_MISSILES", true);

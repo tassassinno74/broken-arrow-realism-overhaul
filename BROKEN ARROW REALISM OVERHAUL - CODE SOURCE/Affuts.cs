@@ -11,11 +11,12 @@
 //   3) Heavy-weapon teams (reel/MobiliteEquipes.csv): road, cross-country and water speed x0.8 of the unit's mobility row, only on
 //      mobility copies owned by those teams (a shared copy is logged and left alone, never cloned, never another row repurposed).
 //   4) Helicopter flares (reel/LeurresParUnite.csv): DecoyQuantity (salvos), DecoySupplyCost (1000 / stock) and DecoyCooldown (gap between
-//      two salvos: 2.5 s for every listed helicopter unless the file gives another value; shorter than the 2.9 s burn, so a flare is always
-//      burning during an attack, while the stock lasts 2.5 times longer than with 1 s) on the decoy ability copies owned by each listed
-//      helicopter. One ability row serves helicopters of different classes (row 86: Mi-35M, MH-47G, Mi-8AMTSh, AH-64E), so the rows keep a
-//      common base value and each copy gets its unit's value. A table row or a copy shared by units wanting different values is never
-//      written (it keeps the row value). Log: [LEURRES].
+//      two salvos: 1 s for every listed helicopter unless the file gives another value - the player's choice of 2026-09-18, a helicopter
+//      must be able to answer a missile every second; well under the 2.9 s burn, so a flare is always burning during an attack, and the
+//      stock burns about 2.5 times faster than with the old 2.5 s, which is accepted and never made up for by a bigger stock) on the decoy
+//      ability copies owned by each listed helicopter. Planes keep their own gap (3 s, B-52 4 s). One ability row serves helicopters of
+//      different classes (row 86: Mi-35M, MH-47G, Mi-8AMTSh, AH-64E), so the rows keep a common base value and each copy gets its unit's
+//      value. A table row or a copy shared by units wanting different values is never written (it keeps the row value). Log: [LEURRES].
 //  Stage 0 [VISEE] measurement inside the CopiesUnites walk: every ammunition copy pointer -> (unit, turret, weapon, ammo) keys, distinct
 //  copies per ammo id, copies reached from several keys or units, copies that are the table row. Stage 1 in the same walk, guarded per
 //  copy: written right after the Id sync in every walk path (first pass, FullUnitClone, LoadUnit, GetLoadedTurret, arsenal card) so the
@@ -28,6 +29,8 @@
 //  CopiesProuvees tells whether stage 0 found per-unit unshared copies for the listed mounts. PairCapState gives PrecisionHeli one
 //  helicopter range per (unit, ammo) pair for its helicopter-only copies (-1 when the pair is fired from mounts of different classes);
 //  those copies (Id 20000+source) are never tracked here, and TryGetCap answers for them with their source row.
+//  For the automatic flare salvos: TryDecoyStock(unit) gives the stock and the gap the flare file wrote for a listed helicopter, so
+//  LeurresAuto uses the mod's own numbers instead of inventing any.
 //  PrecisionHeli has no call site of its own in Mod.cs: its preferences, frame, battle end and quit go through this module.
 using System;
 using System.Collections.Generic;
@@ -52,12 +55,12 @@ namespace RealismOverhaul
 {
     static class Affuts
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         internal const byte KindAmmo = 0, KindSensor = 1, KindMobility = 2, KindDecoy = 3;
         const int Kinds = 4;
         const byte ClassNone = 0, ClassEye = 1, ClassScope = 2;
         const double MapCap = 9000;                                   // same rule as RealStats: whole-map values are never scaled
-        internal const float HeliDecoyCooldown = 2.5f;                // seconds between two flare salvos of a listed helicopter (default)
+        internal const float HeliDecoyCooldown = 1f;                  // seconds between two flare salvos of a listed helicopter (default)
         const int MaxErrors = 50, MaxExamples = 6, MaxListed = 12;
         static readonly string[] ClassNames = { "CAMERA/non listé", "OEIL", "LUNETTE" };
         static readonly string[] KindLogs = { "[VISEE] ", "[CAPTEURS] ", "[EQUIPES] ", "[LEURRES] " };
@@ -150,6 +153,8 @@ namespace RealismOverhaul
         static volatile State _state;
         static volatile Dictionary<long, (float g, float h)> _capTable;   // (unit << 32 | ammo) -> caps in game metres (NaN = none)
         static volatile HashSet<long> _capAmbiguous;                      // (unit << 32 | ammo) fired from mounts of different classes
+        // flare stock and gap of each listed helicopter, read by LeurresAuto; filled by LoadDecoys and kept after EndPlan (data, not a plan)
+        static readonly Dictionary<int, (int Qty, float Gap)> _decoyByUnit = new();
         static volatile bool _copiesProven;
         static bool _dead, _sessionArmed, _battleLogged, _refusedLogged;
         static int _errors, _badLogs, _unwriteLogs, _precisionFrameErrors;
@@ -300,7 +305,7 @@ namespace RealismOverhaul
                 LoadSensors(st, src, off);
                 LoadMobility(st, src, off);
                 try { LoadDecoys(st, src, off); }
-                catch (Exception e) { st.Decoys.Clear(); Mod.Log.Warning("[LEURRES] stock par hélicoptère illisible, valeurs des lignes gardées : " + e.Message); }
+                catch (Exception e) { st.Decoys.Clear(); _decoyByUnit.Clear(); Mod.Log.Warning("[LEURRES] stock par hélicoptère illisible, valeurs des lignes gardées : " + e.Message); }
                 _capTable = BuildCapTable(st, src);
                 _state = st;
                 Log($"tables : {st.MountList.Count} affût(s) listé(s) (OEIL {st.MountList.Count(m => m.Class == ClassEye)}, LUNETTE {st.MountList.Count(m => m.Class == ClassScope)}), " +
@@ -928,6 +933,7 @@ namespace RealismOverhaul
         static void LoadDecoys(State st, DbSource src, HashSet<string> off)
         {
             const string F = "LeurresParUnite.csv";
+            _decoyByUnit.Clear();
             foreach (var r in ReadCsv(F))
             {
                 string opt = Cell(r, "Option");
@@ -940,7 +946,7 @@ namespace RealismOverhaul
                 var dw = new DecoyWant { Unit = unit, Class = Cell(r, "Classe"), Label = $"U{unit} {un.Trim()}" };
                 if (!Int(Cell(r, "DecoyQuantity"), out int q) || q <= 0 || q > 500) { Bad(st, F, $"stock de leurres illisible ({dw.Label})"); continue; }
                 if (!ParseWant(Cell(r, "DecoySupplyCost"), false, 1f, out var cost) || cost.X) { Bad(st, F, $"coût par salve illisible ({dw.Label})"); continue; }
-                // gap between two salvos: 2.5 s unless the file gives another value
+                // gap between two salvos: 1 s unless the file gives another value
                 var cooldown = new Want { V = HeliDecoyCooldown };
                 string cd = Cell(r, "DecoyCooldown");
                 if (cd.Length > 0 && (!ParseWant(cd, false, 1f, out cooldown) || cooldown.X || !(cooldown.V > 0f) || cooldown.V > 30f))
@@ -952,8 +958,18 @@ namespace RealismOverhaul
                 dw.W[2] = cooldown;
                 if (st.Decoys.ContainsKey(unit)) { Bad(st, F, $"{dw.Label} en double"); continue; }
                 st.Decoys[unit] = dw;
+                _decoyByUnit[unit] = (q, cooldown.V);                               // read by LeurresAuto (stock and gap of an aircraft)
             }
             if (st.Decoys.Count > 0) LogDecoyRows(st, src);
+        }
+
+        /// Flare stock and gap between two salvos of a listed helicopter, as the file gives them (LeurresAuto). False for a unit the file
+        /// does not list (planes, unlisted helicopters). Kept after EndPlan: it is data, not a plan. Main thread.
+        internal static bool TryDecoyStock(int unitId, out int qty, out float gap)
+        {
+            if (_decoyByUnit.TryGetValue(unitId, out var v)) { qty = v.Qty; gap = v.Gap; return true; }
+            qty = 0; gap = 0f;
+            return false;
         }
 
         /// Which decoy ability rows each listed helicopter uses in the database (own abilities and options), and which rows are shared

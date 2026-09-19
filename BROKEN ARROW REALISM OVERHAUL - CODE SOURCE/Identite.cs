@@ -16,8 +16,8 @@ namespace RealismOverhaul
     static class Identite
     {
         internal const string ModName = "Broken Arrow Realism Overhaul";
-        internal const string Version = "0.24.0";
-        internal const string Author = "adrien74200";
+        internal const string Version = "1.1";
+        internal const string Author = "tassassinno";
         internal const string SteamUrl = "https://steamcommunity.com/profiles/76561199350352727/";
         internal const string DiscordUrl = "https://discord.gg/hNUBQhXW8Z";
         internal const string OldDllName = "CampagneDeckLibre.dll";

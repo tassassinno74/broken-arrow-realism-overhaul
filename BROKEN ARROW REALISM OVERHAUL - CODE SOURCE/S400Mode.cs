@@ -26,7 +26,7 @@ namespace RealismOverhaul
 {
     static class S400Mode
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const int Ring = 256;                     // power of two: sampled calls kept for the main thread
 
         static MelonPreferences_Entry<bool> _observe;

@@ -60,7 +60,7 @@ namespace RealismOverhaul
         static MelonPreferences_Entry<int> _unclean;
         static MelonPreferences_Entry<string> _guardVersion;
 
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const float TrigUnknownShift = 1000f;
         const float MergeDist = 60f, LossDebounce = 8f, BatchWindow = 12f, MatchDist = 250f, VerifyDist = 60f, VerifyWindow = 45f,
                     FreeLogDist = 1500f, VisibleFor = 10f, RespawnWindow = 90f, SpawnPointMin = 1500f,
@@ -144,10 +144,24 @@ namespace RealismOverhaul
         static readonly Dictionary<string, float> _lastSwap = new();    // batch key -> time of its last swap (respawn breaker window)
         static readonly List<Ev> _landPending = new();
         static bool _mineOk, _everVerified, _landPatched, _landRefused, _sessionArmed;
+        static int _landHooks;                                          // landing postfixes really installed (0 = nothing is reported to Missions)
         static float _mineT = -100f, _nextTrail;
-        static int _near, _nearNoTag, _nearEarly, _impossible, _landed, _landLogs, _landMissed, _mineCount;
+        static int _near, _nearNoTag, _nearEarly, _impossible, _landed, _landMissed, _landLogs, _mineCount;
         static int _horsVue, _repli;                                    // places chosen outside his units' sight / searches that fell back to the distance rule
         static HarmonyLib.Harmony _harmony;
+
+        // ---- Renforts (module « deuxième adversaire », Renforts.cs): what this file lends it, read only except OwnSpawnBegin/End ----
+        /// A model is one enemy spawn call of THIS battle, kept so the module can copy what the mission already uses instead of
+        /// inventing a unit. Info is the UnitProperty of the script's own call (never built by the mod, never modified).
+        internal sealed class Model
+        {
+            public int UnitId, Owner, Role, Type, Cost, Seen; public string Cls = "?", Name = "?";
+            public float LastT; public Il2CppBrokenArrow.ScriptEngine.Editor.Properties.UnitProperty Info;
+        }
+        static readonly Dictionary<int, Model> _models = new();         // unit id -> one model (the script's own call, held so the object stays alive)
+        [ThreadStatic] static int _ownSpawn;                            // re-entrance (per thread): our own SpawnUnit calls are not judged by OnSingle
+        static int _ownCalls, _scriptEnemyUnits, _scriptEnemyValue, _scriptEnemyCalls;
+        static float _lastScriptSpawnT = -1f;
         internal static PlayZoneCtl PlayZone;                            // captured by Patch_PlayZoneSet / Patch_PlayZoneReset
 
         static Il2CppReferenceArray<LuaUnit> _enemyArr, _playerArr;
@@ -217,7 +231,8 @@ namespace RealismOverhaul
                 if (_enemyCalls + _allied + _free > 0) Guard.Run("Spawns.Bilan", () => Summary(UnityEngine.Time.time, "fin de bataille"));
                 _zones.Clear(); _pts.Clear(); _tags.Clear(); _triggers.Clear(); _trigGeo.Clear(); _trigBad = 0; _trigListBad = false; _batches.Clear(); _byPtr.Clear(); _proven.Clear();
                 _groupLast.Clear(); _relocGroups.Clear(); _blockedGroups.Clear(); _reasons.Clear(); _known.Clear(); _rawSeen.Clear();
-                _typeUid.Clear(); _vueUid.Clear(); _rows.Clear(); _reveals.Clear(); _once.Clear();
+                _typeUid.Clear(); _vueUid.Clear(); _rows.Clear(); _reveals.Clear(); _once.Clear(); _models.Clear();
+                _ownSpawn = 0; _ownCalls = _scriptEnemyUnits = _scriptEnemyValue = _scriptEnemyCalls = 0; _lastScriptSpawnT = -1f;
                 _mine.Clear(); _trail.Clear(); _sticky.Clear(); _tagUsed.Clear(); _lastTarget.Clear(); _lastSwap.Clear(); _landPending.Clear();
                 _mineOk = _everVerified = false; _mineT = -100f; _nextTrail = 0f; _busPosBad = false; _busBadN = 0;
                 _near = _nearNoTag = _nearEarly = _impossible = _landed = _landLogs = _landMissed = _mineCount = 0;
@@ -255,6 +270,10 @@ namespace RealismOverhaul
 
         internal static void Frame()
         {
+            // Mission protection (ProtectionMission.cs) rides here because this is the one per-frame call that Mod.OnUpdate makes
+            // only inside a campaign mission with the mod on. It runs before the preference gate below and outside the 2 s
+            // throttle: it has its own timer and its own error handling, and it never throws.
+            ProtectionMission.Frame();
             if (Enabled == null) return;
             float now = UnityEngine.Time.time;
             if (now < _next) return;
@@ -636,6 +655,9 @@ namespace RealismOverhaul
             float now = UnityEngine.Time.time;
             lock (_sync)
             {
+                // re-entrance: a call the mod itself made (Renforts) is not a script reinforcement. Without this the prefix would
+                // count it in its batches, judge it and could move its tag (design rule: always a re-entrance counter around SpawnUnit).
+                if (_ownSpawn > 0) { _ownCalls++; return; }
                 int mode = ModeVal();
                 if (mode == 0 || _start < 0) return;
                 Interlocked.Increment(ref _hk[EvSingle]);
@@ -664,6 +686,7 @@ namespace RealismOverhaul
                 catch { }
                 if (!r.Enemy) { _allied++; return; }      // allied or unknown owner: never touched, not observed
                 _enemyCalls++;
+                NoteModel(d, r, now);                    // what the mission itself uses on the enemy side, for Renforts
                 var b = BatchFor(r, now, "simple", out bool isNew, out float interval);
                 string verdict = Decide(d, r, b, now, mode);
                 int usedTag = r.Moved ? r.SentTag : r.TagOk ? r.TagUid : 0;
@@ -1385,7 +1408,7 @@ namespace RealismOverhaul
                 if (m1 != null) { _harmony.Patch(m1, postfix: new HarmonyMethod(AccessTools.Method(typeof(Patch_Landed), nameof(Patch_Landed.PostSingle)))); n++; }
                 var m2 = AccessTools.Method(typeof(NodeSpawnMultiUnits), nameof(NodeSpawnMultiUnits.OnSpawned));
                 if (m2 != null) { _harmony.Patch(m2, postfix: new HarmonyMethod(AccessTools.Method(typeof(Patch_Landed), nameof(Patch_Landed.PostMulti)))); n++; }
-                _landPatched = true;
+                _landPatched = true; _landHooks = n;
                 Log($"crochet d'atterrissage installé ({n}/2) : chaque unité apparue par le script est comparée au lieu demandé");
             }
             catch (Exception e)
@@ -1502,6 +1525,187 @@ namespace RealismOverhaul
             if (first) LogOnce($"atterri:{best.Side}:{ptag}:{best.Cls}", $"tag {ptag} prouvé (atterrissage) pour le camp {best.Side} classe {best.Cls} : {u.Name} à {dTag:0} m du tag");
         }
 
+        // ------------------------------------------------------------ Renforts: what this file lends to the added-attacks module
+        //  Everything here is read only for the game. The only thing Renforts changes is the re-entrance counter around its own
+        //  SpawnService.SpawnUnit call, so this file never mistakes the mod's own unit for a script reinforcement.
+
+        /// Re-entrance counter, per thread: SpawnService.SpawnUnit calls our prefix on the very thread that asked for the unit, so a
+        /// spawn of the script starting on another thread inside our window is still judged normally.
+        internal static void OwnSpawnBegin() => _ownSpawn++;
+        internal static void OwnSpawnEnd() { if (_ownSpawn > 0) _ownSpawn--; }
+
+        /// True only when the landing postfixes are really in place. Without them nothing reports the script's own arrivals to
+        /// Missions.NoteSpawn, so a unit of the script landing at the same tag could be taken for one of ours: Renforts stays quiet.
+        internal static bool LandingHookOk => _landPatched && !_landRefused && _landHooks > 0;
+
+        /// True when this file has everything Renforts needs: solo campaign battle, both sides known, his units readable.
+        internal static bool RenfortsReady
+        {
+            get { lock (_sync) return _active && _solo == true && _playerSide >= 0 && _enemySide >= 0 && _mineOk && _start >= 0f; }
+        }
+        internal static int EnemySide { get { lock (_sync) return _enemySide; } }
+        internal static int PlayerSide { get { lock (_sync) return _playerSide; } }
+        internal static int MineCount { get { lock (_sync) return _mine.Count; } }
+        /// Units, points and calls the mission script itself spawned on the enemy side in this battle (the caps of Renforts are shares of these).
+        internal static int ScriptEnemyUnits { get { lock (_sync) return _scriptEnemyUnits; } }
+        internal static int ScriptEnemyValue { get { lock (_sync) return _scriptEnemyValue; } }
+        internal static int ScriptEnemyCalls { get { lock (_sync) return _scriptEnemyCalls; } }
+        internal static float LastScriptSpawnT { get { lock (_sync) return _lastScriptSpawnT; } }
+
+        /// One enemy call of this battle kept as a model. Never a model of an aircraft, a helicopter, artillery, anti-air, a
+        /// deck unit or a call whose cargo the script named: the mod only copies plain ground vehicles the mission already fields.
+        static void NoteModel(SpawnNodeData d, Req r, float now)
+        {
+            _scriptEnemyCalls++;
+            _lastScriptSpawnT = now;
+            int cost = 0;
+            try { cost = r.Row?.Cost ?? 0; } catch { }
+            _scriptEnemyUnits += r.Units;
+            _scriptEnemyValue += r.Units * Math.Max(0, cost);
+            if (r.Deck || r.Air || r.UnitId <= 0 || r.Row == null || cost <= 0) return;
+            string cargoGroup = null;
+            try { cargoGroup = d.CargoUnitGroup; } catch { }
+            if (!string.IsNullOrEmpty(cargoGroup)) return;              // the script names this call's cargo: copying it would copy a named group
+            int role = 0, type = 0;
+            try { role = (int)r.Row.Role; type = (int)r.Row.Type; } catch { return; }
+            if ((type & (8 | 16)) != 0) return;                          // helicopter / aircraft: never
+            if (!RenfortRole(role)) return;
+            if (_models.TryGetValue(r.UnitId, out var m)) { m.Seen++; m.LastT = now; return; }
+            if (_models.Count >= 60) return;
+            m = new Model { UnitId = r.UnitId, Owner = r.Owner, Role = role, Type = type, Cost = cost, Cls = r.Cls, Seen = 1, LastT = now };
+            try { m.Name = r.Row.Name ?? "?"; } catch { }
+            try { m.Info = d.UnitInfo; } catch { m.Info = null; }
+            if (m.Info == null) return;
+            _models[r.UnitId] = m;
+        }
+
+        /// Ground combat vehicles only: light armour, IFV / APC and MBT. Never logistics (14), never anti-air (15, 16),
+        /// never artillery (130-133), never infantry (a lone squad far away would only walk).
+        internal static bool RenfortRole(int role) => role >= 10 && role <= 13;
+        /// The price of a light vehicle. The exact meaning of each role number between 10 and 13 is not proven, so the canary is
+        /// chosen by price (the cheapest vehicle the mission itself fields), which is a light one in every mission seen so far.
+        internal const int CanaryMaxCost = 150;
+
+        /// Models of this battle, cheapest first. The caller never allocates in the loop.
+        internal static void RenfortModels(List<Model> into)
+        {
+            into.Clear();
+            lock (_sync)
+            {
+                foreach (var m in _models.Values) into.Add(m);
+            }
+            into.Sort(ByCost);
+        }
+        static int ByCost(Model a, Model b) => a.Cost.CompareTo(b.Cost);
+
+        /// Alive enemy units of this battle (uid, position, role). Filled from the list ReadUnits refreshes every 2 s.
+        internal static void RenfortEnemyUnits(List<(int uid, V3 pos, int role)> into)
+        {
+            into.Clear();
+            lock (_sync)
+            {
+                var arr = _enemyArr;
+                for (int i = 0; i < (arr?.Length ?? 0); i++)
+                {
+                    try { var u = arr[i]; if (u != null && u.IsAlive()) into.Add((u.UID, u.GetPosition(), u.UnitRole)); }
+                    catch { }
+                }
+            }
+        }
+
+        /// The live enemy unit of this uid, or null.
+        internal static LuaUnit RenfortEnemyLua(int uid)
+        {
+            lock (_sync) { return FindLua(_enemyArr, uid, out var u) ? u : null; }
+        }
+
+        /// Distance from a place to his nearest live unit (or to a position one of them held in the last minute).
+        internal static float RenfortPlayerDistance(V3 p) { lock (_sync) return Math.Min(MinMine(p), MinTrail(p)); }
+
+        /// An objective zone of the mission the enemy does not hold, at least minAway from p and, when possible, the nearest one.
+        /// The module only ever aims at the mission's own objective zones: it must never use the places of his units as a target.
+        internal static bool RenfortZoneTarget(V3 from, float minAway, out V3 pos, out int id)
+        {
+            pos = V3.zero; id = 0;
+            float now = UnityEngine.Time.time, best = float.MaxValue;
+            lock (_sync)
+            {
+                foreach (var z in _zones)
+                {
+                    if (!Vis(z, now) || z.Owner == _enemySide) continue;
+                    float d = EnemyAi.D2(z.Pos, from);
+                    if (d < minAway || d >= best) continue;
+                    best = d; pos = z.Pos; id = z.Id;
+                }
+            }
+            return id != 0;
+        }
+
+        /// Play zone (or map) bounds, for the flanking waypoint of the Hard doctrine.
+        internal static bool RenfortBounds(out UnityEngine.Bounds b) { lock (_sync) return PlayBounds(out b); }
+
+        /// The place Renforts may add a unit: an enemy tag where the script itself landed units of the same class in THIS battle,
+        /// far from his units and from everything of his, inside the play zone and on the map, not used in the last TagBusy seconds.
+        /// The farthest place from him wins. No origin is involved, so there is no shift limit and no trigger comparison: the tag is a
+        /// place the script's own units already arrived at this battle, so they already entered whatever triggers cover it.
+        /// Returns false and says why when no place qualifies: a shot is CANCELLED, never moved somewhere else.
+        internal static bool RenfortPick(string cls, float minPlayer, float minZone, float minSpawnPoint, out int tag, out V3 pos, out float playerD, out string why)
+        {
+            tag = 0; pos = V3.zero; playerD = -1f;
+            float now = UnityEngine.Time.time;
+            int nSame = 0, fLanded = 0, fBubble = 0, fVue = 0, fBusy = 0, fZone = 0, fSpawn = 0, fPlay = 0, fMap = 0;
+            lock (_sync)
+            {
+                if (!_mineOk) { why = "tes unités illisibles"; return false; }
+                bool pzOk = PlayBounds(out var pz);
+                float bestD = -1f;
+                foreach (var kv in _proven)
+                {
+                    if (kv.Key.side != _enemySide || kv.Key.cls != cls) continue;
+                    nSame++;
+                    var pr = kv.Value; int t = kv.Key.tag; V3 p = pr.Pos;
+                    if (!pr.Landed) { fLanded++; continue; }
+                    float dm = MinMine(p), dt = MinTrail(p), d = Math.Min(dm, dt);
+                    if (d < minPlayer || _sticky.ContainsKey("t" + t.ToString(CultureInfo.InvariantCulture))) { fBubble++; continue; }
+                    if (VuParMoi(p)) { fVue++; continue; }               // always out of his optics, at every difficulty
+                    if (_tagUsed.TryGetValue(t, out float used) && now - used < TagBusy) { fBusy++; continue; }
+                    float mz = float.MaxValue;
+                    foreach (var z in _zones) if (z.Held || (Vis(z, now) && z.Owner == _playerSide)) mz = Math.Min(mz, EnemyAi.D2(p, z.Pos));
+                    if (mz < minZone) { fZone++; continue; }
+                    bool sp = false;
+                    foreach (var pt in _pts.Values) if (pt.Team == _playerSide && pt.Pos != V3.zero && EnemyAi.D2(p, pt.Pos) < minSpawnPoint) { sp = true; break; }
+                    if (sp) { fSpawn++; continue; }
+                    if (pzOk && !InBounds(pz, p, 0f)) { fPlay++; continue; }
+                    if (OnMap(p) != 1) { fMap++; continue; }
+                    if (d <= bestD) continue;
+                    bestD = d; tag = t; pos = p;
+                }
+                if (tag != 0) { playerD = bestD; why = null; return true; }
+            }
+            why = $"tags ennemis même classe {nSame} ; refusés : pas d'atterrissage prouvé {fLanded}, trop près de toi (< {minPlayer:0} m) {fBubble}, dans la vue de tes unités {fVue}, "
+                + $"déjà utilisé il y a moins de {TagBusy:0} s {fBusy}, près d'une zone à toi (< {minZone:0} m) {fZone}, près d'un de tes points d'apparition (< {minSpawnPoint:0} m) {fSpawn}, hors zone jouable {fPlay}, hors carte {fMap}";
+            return false;
+        }
+
+        /// Renforts really sent units to this tag: it is busy for TagBusy seconds, for its own next shot AND for a script swap.
+        /// Called only when a unit was really asked for, never while judging (observation mode changes nothing here).
+        internal static void RenfortUseTag(int tag)
+        {
+            if (tag <= 0) return;
+            lock (_sync) { if (_tagUsed.ContainsKey(tag) || _tagUsed.Count < 2000) _tagUsed[tag] = UnityEngine.Time.time; }
+        }
+
+        /// One compact line for the battle summary of Renforts.
+        internal static string RenfortState()
+        {
+            lock (_sync)
+            {
+                int landedTags = 0;
+                foreach (var kv in _proven) if (kv.Key.side == _enemySide && kv.Value.Landed) landedTags++;
+                return $"modèles ennemis retenus={_models.Count} tags ennemis avec atterrissage prouvé={landedTags} apparitions du script (ennemi)={_scriptEnemyUnits} unité(s) pour {_scriptEnemyValue} points en {_scriptEnemyCalls} appels ; appels du mod ignorés par le préfixe={_ownCalls}";
+            }
+        }
+
         // ------------------------------------------------------------ helpers and summary
         static int SideOfOwner(int uid)
         {
@@ -1528,7 +1732,7 @@ namespace RealismOverhaul
             Log($"bilan bulle : rayon {PlayerRadius.Value:0} m, tes unités suivies={_mine.Count} ({(_mineOk ? "lisibles" : "ILLISIBLES")}), positions passées={_trail.Count}, endroits collants={_sticky.Count} ; appels près de toi={_near} dont jugés échangeables={Math.Max(0, _near - _nearNoTag - _nearEarly)}, appels sans endroit sûr (gardés)={_impossible}, sans tag (non protégés)={_nearNoTag}, début de mission={_nearEarly}" +
                 $" ; renforts déplacés hors de vue de tes unités={_horsVue}, repli sur la règle de distance ({PlayerMin.Value:0} m) faute de tag hors de vue={_repli}");
             Log($"bilan portes : disjoncteur={(_tripped ? "COUPÉ (" + _tripWhy + ")" : "armé")} échange vérifié dans la bataille={(_everVerified ? "oui" : "non")} lot en vérification={flight} groupes bloqués={_blockedGroups.Count} test déclencheurs={TrigState()} tags scénario={_tags.Count} tags ennemis vus={provenTags} (atterrissage prouvé {landedTags}, par crochet {exactTags}) zones tenues={held}/{_zones.Count} lots non suivis (trop de lots)={_batchOverflow}");
-            Log($"bilan atterrissages : crochet={(_landPatched ? "installé" : _landRefused ? "refusé" : "pas installé")} liés à un appel={_landed} introuvables={_landMissed} en attente={_landPending.Count} ; jamais protégés par cette règle : unités débarquées par les ordres du script, réserves révélées, appels sans tag");
+            Log($"bilan atterrissages : crochet={(_landPatched ? $"installé ({_landHooks}/2)" : _landRefused ? "refusé" : "pas installé")} liés à un appel={_landed} introuvables={_landMissed} en attente={_landPending.Count} ; jamais protégés par cette règle : unités débarquées par les ordres du script, réserves révélées, appels sans tag");
             Log($"bilan observation : résultats vus={_resSeen} rien vu={_resNone} apparitions sans appel={_free} (dont {_freeNear} à moins de {FreeLogDist:0} m d'une zone joueur) ordres près des zones={_ordersSeen} réserves révélées={_revealsDone} cachées={_hides} ; apparitions exactes liées à un appel={_exactMatched} (lieu=demandé {_spAtTarget}, lieu=tag {_spAtTag}, lieu nul {_spZero}) ambiguës={_exactAmbig} ennemies sans appel={_exactNoReq}");
             Log($"bilan crochets : simple={_hk[EvSingle]} vague={_hk[EvWave]} ordre complexe={_hk[EvMoveComplex]} débarquement={_hk[EvUnload]} déplacement simple={_hk[EvRunMove]} groupe visible={_hk[EvGroupVisible]} unité visible={_hk[EvUnitVisible]} apparition exacte={_hk[EvSpawned]} atterrissage={_hk[EvLanded]} erreurs={_hk[EvError]} file perdue={_qDropped} lignes non écrites (plafonds)={_droppedLogs}");
         }

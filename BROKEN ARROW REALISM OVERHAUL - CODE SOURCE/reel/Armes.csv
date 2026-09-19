@@ -275,3 +275,23 @@ OPTION_MISE_EN_BATTERIE;907;MLRS 300 Sarma Double;;;;;180;180;;;
 ;502;DMR 9.3x64 SVDK T3;;;;;;;;;False
 ;136;Sniper 7.62 SV98 T2;;;;;6;8;;;
 ;152;Sniper 8.6 Lapua T5000 T2;;;;;6;8;;;
+# OPTION_VISEE_MISSILE_HELICO : temps de visée des lance-missiles guidés MONTÉS SUR HÉLICOPTÈRE, 3 à 5 secondes au lieu de 1 à 2. Un hélicoptère ne peut pas recevoir l'ordre de faire du stationnaire (cet ordre n'existe pas dans le jeu) : à la place, celui qui tient sa cible finit toujours par tirer, simplement plus tard, et celui qui passe en trombe et perd sa cible avant la fin ne tire pas. L'effet est graduel, jamais un blocage : aucune vague d'hélicoptères du script ne peut être définitivement muselée. Seule l'arme est touchée, jamais la munition : le même missile monté sur un véhicule terrestre garde son temps de visée. Les lignes 12 et 106 sont aussi portées par des avions-canons qui tournent au-dessus de la zone (AC-130, KC-130J Harvest Hawk, MC-130H) : quelques secondes de plus ne changent rien pour eux. Identique pour les deux camps. Fichier généré.
+OPTION_VISEE_MISSILE_HELICO;12;ATGM Hellfire x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;104;ATGM Kokon x2;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;106;ATGM Hellfire x2 Heli;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;107;ATGM Vikhr x6;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;195;ATGM Kokon x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;196;ATGM Ataka x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;351;ATGM Ataka x8;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;352;ATGM Kokon x8;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;356;ATGM HermesA x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;357;ATGM Ataka x6;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;552;ATGM Hellfire x1;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;603;ATGM LMUR x2;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;608;ATGM TOW Heli x2;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;609;ATGM TOW Heli x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;611;ATGM Hellfire JAGM x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;647;ATGM Hellfire F&F x4;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;928;ATGM Kh25ML x1 Heli;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;936;ATGM KornetM x2 Heli;;;;;3;5;;;
+OPTION_VISEE_MISSILE_HELICO;1020;ATGM LMUR x1;;;;;3;5;;;

@@ -1,6 +1,6 @@
 # Broken Arrow Realism Overhaul
 
-Source code of the **Broken Arrow Realism Overhaul** mod for *Broken Arrow* (1.2.0.3), by **adrien74200**.
+Source code of the **Broken Arrow Realism Overhaul** mod for *Broken Arrow* (1.2.0.3), by **tassassinno**.
 
 The mod is a single-player / campaign realism overhaul: real weapon ranges, real calibres and
 armour, real optics and sensors, real ballistics, reworked helicopter flight and countermeasures,
@@ -61,10 +61,10 @@ dotnet build BrokenArrowRealismOverhaul.csproj -c Release -o out -p:Public=true 
 
 The result is `out\BrokenArrowRealismOverhaul.dll`, which is the file shipped in `Mods\` of the
 released archive. The build is deterministic (`Deterministic`, `PathMap`, no PDB), so the released
-DLL of version 0.24.0 is reproduced byte for byte:
+DLL is reproduced byte for byte:
 
 ```
-BrokenArrowRealismOverhaul.dll   1 454 080 bytes   MD5 f1c0dea433838b0893acd2f49bbeb540
+version 1.1    BrokenArrowRealismOverhaul.dll   2 141 696 bytes   MD5 a227dcbe53ee5aee39143eab2b2bca0f
 ```
 
 ## Install (for players)
@@ -74,4 +74,8 @@ folder, then start the game from Steam with the **"Anti-Cheat Disabled"** launch
 
 ## License
 
-Free to use and to learn from. Please do not reupload the compiled mod elsewhere without asking.
+Copyright (c) 2026 tassassinno. All rights reserved.
+
+This source code is published for transparency and for mod hosting review. You may read it and learn
+from it. You may not copy, reuse, redistribute or publish it, in whole or in part, in another mod or
+project, without my written permission.

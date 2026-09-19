@@ -63,7 +63,7 @@ using Il2CppList = Il2CppSystem.Collections.Generic.List<Il2CppBrokenArrow.DataB
 using Il2CppTransportList = Il2CppSystem.Collections.Generic.List<Il2CppBrokenArrow.DataBase.Models.TransportAvailabilities>;
 using Il2CppModList = Il2CppSystem.Collections.Generic.List<Il2CppBrokenArrow.Client.Ecs.Decks.Models.DeckModData>;
 
-[assembly: MelonInfo(typeof(RealismOverhaul.Mod), "Broken Arrow Realism Overhaul", "0.24.0", "adrien74200", "https://discord.gg/hNUBQhXW8Z")]
+[assembly: MelonInfo(typeof(RealismOverhaul.Mod), "Broken Arrow Realism Overhaul", "1.1", "tassassinno", "https://discord.gg/hNUBQhXW8Z")]
 [assembly: MelonGame("SteelBalalaikaStudio", "BrokenArrow")]
 // patches are applied one class at a time (ApplyPatches): after a game update a renamed method only disables its own patch
 [assembly: HarmonyDontPatchAll]
@@ -101,19 +101,32 @@ namespace RealismOverhaul
             Assistants.CreatePrefs();
             EnemyAi.CreatePrefs();
             Demolition.CreatePrefs();
+            Guard.Run("Batiments.Reglages", Batiments.CreatePrefs);     // after Demolition: same preference category, one entry of its own (measurement, writes nothing)
             Spawns.CreatePrefs();   // before ApplyPatches: the spawn patches read their prefs in Prepare()
+            Renforts.CreatePrefs();     // after Spawns: it reads the spawn tags and the spawn counters of the same battle
             Missions.CreatePrefs();
             Obstacles.CreatePrefs();
             S400Mode.CreatePrefs();
             Reperage.CreatePrefs();
             LeurresMesure.CreatePrefs();
+            LeurresAuto.CreatePrefs();
             AntiHeliPortee.CreatePrefs();
+            Esquive.CreatePrefs();
             AntiHeliTouches.CreatePrefs();
             VueAA.CreatePrefs();
             AltCercles.CreatePrefs();   // before ApplyPatches: the Alt tool patches read its stage
             Affuts.CreatePrefs();
             CalibreMesure.CreatePrefs();
             Couvert.CreatePrefs();
+            Retranchement.CreatePrefs();    // after Couvert: the entrenchment factor is applied by the postfix Couvert already owns
+            HeureDuJour.CreatePrefs();  // before ApplyPatches: its own hook is installed later, only once the player asks for an hour
+            // v0.24.0 modules. Each one on its own guard: these preference blocks are new, and a throw here would stop OnInitializeMelon
+            // before ApplyPatches, i.e. leave the whole mod silent instead of one module.
+            Guard.Run("Suppression.Reglages", Suppression.CreatePrefs);
+            Guard.Run("Critiques.Reglages", Critiques.CreatePrefs);
+            Guard.Run("Meteo.Reglages", Meteo.CreatePrefs);             // after HeureDuJour: both read the ambiance of the mission, the hour first
+            Guard.Run("Nuit.Reglages", Nuit.CreatePrefs);
+            Guard.Run("CargoMort.Reglages", CargoMort.CreatePrefs);     // its own crash guard: created here as well as from its patch's Prepare(), which runs just after
             Dlc.CreatePrefs();
             ApplyForcedPrefs();     // after every CreatePrefs, before ApplyPatches (some patches read their prefs in Prepare())
             ApplyPatches();
@@ -238,6 +251,17 @@ namespace RealismOverhaul
             if (!_modTabDead && !AntiCheatActive) { try { RunModTab(); } catch (Exception e) { _modTabDead = true; Log.Error("[ONGLET] onglet Mod indisponible : " + e.GetBaseException().Message); } }
             // the damage-reduction hooks must never stay armed once the mod is off or the campaign is left (FastTick only runs inside it)
             if (Cheats.ToughArmed && (!Actif.Value || !Campaign.InCampaign || Campaign.MissionInerte)) Guard.Run("TricheDesarme", Cheats.Disarm);
+            // mod coupé depuis son onglet en pleine bataille : aucun hélico ne doit rester en vol bas
+            if (Esquive.ARendre && !Actif.Value) Guard.Run("EsquiveRendu", Esquive.Disarm);
+            // GameConfig writers, ticked here and not in the mission block for the same reason ModTab ticks Epaves (ModTab.cs:177):
+            // their own tick is what hands the game its values back, so it must keep running once the mod is switched off from its tab.
+            // Both are self-throttled (one real pass every two seconds for Nuit, every half second for CargoMort) and neither ever
+            // throws; CargoMort's watchdog also runs from a mission-script node, and being called twice costs one clock read.
+            if (!AntiCheatActive)
+            {
+                Guard.Run("Nuit", Nuit.Tick);
+                Guard.Run("CargoMort", CargoMort.Tick);
+            }
             if (!Actif.Value || AntiCheatActive) return;
 
             // Hotkeys and the order-panel assistants run every frame (self-throttled), but only inside a campaign mission,
@@ -253,18 +277,30 @@ namespace RealismOverhaul
                 Perf.Run("IA-Ennemie", EnemyAi.Frame);
                 Perf.Run("Demolition", Demolition.Frame);
                 Perf.Run("Spawns", Spawns.Frame);
+                Perf.Run("Renforts", Renforts.Frame);                                     // attaques ajoutées (deuxième adversaire) : lit l'état de Spawns du même tour
                 Perf.Run("Obstacles", Obstacles.Frame);
                 Perf.Run("S400", S400Mode.Frame);
                 Perf.Run("Reperage", Reperage.Frame);
                 Perf.Run("VueAA", VueAA.Frame);
                 Perf.Run("Leurres.Principal", LeurresMesure.FramePrincipal);
                 Perf.Run("LeurresMesure", LeurresMesure.Frame);
+                Perf.Run("LeurresAuto", LeurresAuto.Frame);                                // after LeurresMesure: the missile scan of the frame has already run
                 Perf.Run("AntiHeliPortee", AntiHeliPortee.Frame);
                 Perf.Run("AntiHeliTouches", AntiHeliTouches.Frame);
+                if (!Campaign.BattleOver) Perf.Run("Esquive", Esquive.Frame);          // vol bas des hélicos de l'IA sous le feu anti-aérien
                 Perf.Run("CalibreMesure", CalibreMesure.Frame);                            // own end-screen latch (CalibreMesure._endLatch)
+                Perf.Run("PorteeMiniCarte", PorteeMiniCarte.Frame);                        // after Spawns: the play zone of the frame is already read ; no end-screen latch (it only watches a journaled write)
+                if (!Campaign.BattleOver) Perf.Run("Retranchement", Retranchement.Frame);  // avant Couvert : les niveaux du tour sont frais quand l'instantané est publié
                 if (!Campaign.BattleOver) Perf.Run("Couvert", Couvert.Frame);
                 if (!Campaign.BattleOver) Perf.Run("Affuts", Affuts.Frame);
                 Perf.Run("SanteCombat", SanteCombat.Frame);                                // own pause and end-screen handling
+                Perf.Run("HeureDuJour", HeureDuJour.Frame);                                // watchdog of the light and the one reading of the mission script
+                // v0.24.0 modules
+                if (!Campaign.BattleOver) Perf.Run("Suppression", Suppression.Frame);      // planchers de stress : la passe qui les remet en place après un rechargement de base
+                if (!Campaign.BattleOver) Perf.Run("Critiques", Critiques.Frame);          // closed by the battle-end signal, like Couvert: no new session on the end screen
+                Perf.Run("Meteo", Meteo.Frame);                                            // only follows the battle and the database here; the writing is done by its own hook
+                Perf.Run("Batiments", Batiments.Tick);                                     // relevé des bâtiments de la carte, une passe par bataille, rien n'est écrit
+                Perf.Run("Blocage", Blocage.Frame);                                        // after Missions and SanteCombat: it reads the numbers they refreshed this frame
                 Perf.Run("FinBataille", Campaign.PollBattleEnd);
             }
 
@@ -314,6 +350,10 @@ namespace RealismOverhaul
                     Guard.Run("DeckCache", DeckCache.Refresh);
                 }
             }
+            // in a mission and in the menus alike: its hook is installed only once the player has asked for an hour, and never removed
+            Guard.Run("HeureDuJour", HeureDuJour.SlowTick);
+            // same shape, same reason: the weather hook is installed the first time the feature is wanted, and nothing else happens here
+            Guard.Run("Meteo", Meteo.SlowTick);
         }
 
         /// Divisions CAMPAGNE on the loaded database (every 2 s), never in a mission played without the mod.
@@ -330,16 +370,27 @@ namespace RealismOverhaul
             Guard.Run("S400.Quit", S400Mode.OnQuit);
             Guard.Run("Reperage.Quit", Reperage.OnQuit);
             Guard.Run("LeurresMesure.Quit", LeurresMesure.OnQuit);
+            Guard.Run("LeurresAuto.Quit", LeurresAuto.OnQuit);
             Guard.Run("AntiHeliPortee.Quit", AntiHeliPortee.OnQuit);
             Guard.Run("AntiHeliTouches.Quit", AntiHeliTouches.OnQuit);
+            Guard.Run("Esquive.Quit", Esquive.OnQuit);
             Guard.Run("VueAA.Quit", VueAA.OnQuit);
             Guard.Run("Spawns.Quit", Spawns.OnQuit);
+            Guard.Run("Renforts.Quit", Renforts.OnQuit);
             Guard.Run("Missions.Quit", Missions.OnQuit);
+            Guard.Run("Protection.Quit", ProtectionMission.OnQuit);   // the author quits the game from inside the mission: the report must still be written
             Guard.Run("AltCercles.Quit", AltCercles.OnQuit);
             Guard.Run("CalibreMesure.Quit", CalibreMesure.OnQuit);
             Guard.Run("Couvert.Quit", Couvert.OnQuit);
+            Guard.Run("Retranchement.Quit", Retranchement.OnQuit);
             Guard.Run("Affuts.Quit", Affuts.OnQuit);         // before Realism.Restore
             Guard.Run("SanteCombat.Quit", SanteCombat.OnQuit);
+            Guard.Run("Assistants.Quit", Assistants.OnQuit);  // marqueur de sécurité de l'artillerie (bataille non terminée)
+            Guard.Run("HeureDuJour.Quit", HeureDuJour.OnQuit);
+            // v0.24.0 modules, before Realism.Restore: each gives the game its own values back and writes its last line
+            Guard.Run("Suppression.Quit", Suppression.OnQuit);
+            Guard.Run("Critiques.Quit", Critiques.OnQuit);
+            Guard.Run("Meteo.Quit", Meteo.OnQuit);
             Guard.Run("Perf.Quit", Perf.EndBattle);          // the last battle of the session keeps its [PERF] line
             try { Realism.Restore("fermeture du jeu"); } catch { }
         }
@@ -573,8 +624,9 @@ namespace RealismOverhaul
             _hauteurBat = c.CreateEntry("HauteurObservationBatiments", 2.0f, description: Build.Desc("Multiplicateur de la hauteur d'observation depuis les bâtiments (10 m dans le jeu) : on voit plus loin par-dessus les obstacles bas, la ligne de vue reste bloquée par les autres bâtiments"));
             VraiesStats = c.CreateEntry("VraiesStats", true, description: Build.Desc("true = vraies statistiques par unité (vitesses, portées, munitions, rechargements) et contreparties réalistes ; les multiplicateurs par famille ne sont plus utilisés. false = ancien réalisme par familles"));
             EchellePortees = c.CreateEntry("EchellePortees", 1f, description: Build.Desc("1 = vraies portées (1 m réel = 1 m en jeu). 2 = les portées des vraies stats divisées par deux (celles qui couvrent déjà toute la carte restent à 9 km ; les munitions sans vraies stats gardent leur portée du jeu)"));
+            _rayonRavito = c.CreateEntry("RayonRavitaillement", 150f, description: Build.Desc("Rayon en mètres des caisses et des dépôts de ravitaillement posés au sol (50 dans le jeu de base ; 150 = un vrai dépôt de 300 m de côté). Le cercle dessiné par le jeu fait toujours exactement deux fois ce rayon, donc il devient visible sur la carte. Le rayon n'est jamais abaissé. Mettre 50 pour revenir au jeu de base. Coupable aussi par OPTION_RAVITAILLEMENT_ZONE. ATTENTION : c'est le même rayon qui décide à qui appartient une caisse, donc un ennemi qui passe à 150 m te la prend (50 m dans le jeu de base). Si tu poses des caisses en avant de tes lignes, remets 50"));
             OptionsInactives = c.CreateEntry("OptionsInactives", "OPTION_S400_ANTIMISSILE,OPTION_PANTSIR_ANTIMISSILE",
-                description: Build.Desc("Options des vraies stats désactivées (séparées par des virgules). Retirer OPTION_S400_ANTIMISSILE pour que le S-400 (et le S-350) ne tire plus que sur les missiles ; OPTION_PANTSIR_ANTIMISSILE pareil pour le Pantsir (et le DT-30AA)"));
+                description: Build.Desc("Options des vraies stats désactivées (séparées par des virgules). Retirer OPTION_S400_ANTIMISSILE pour que le S-400 (et le S-350) ne tire plus que sur les missiles ; OPTION_PANTSIR_ANTIMISSILE pareil pour le Pantsir (et le DT-30AA). Ajouter OPTION_MISSILE_ANTIAERIEN_LETAL pour rendre aux missiles sol-air portables et légers leurs dégâts d'origine (il faut alors trois missiles pour abattre un hélicoptère d'attaque au lieu de deux). Ajouter OPTION_RAVITAILLEMENT_ZONE pour revenir aux zones de ravitaillement du jeu de base (caisses 50 m, camions et VCI 50 m) ; OPTION_RAVITAILLEMENT_POIDS pour rendre aux missiles guidés leur prix de ravitaillement d'origine (150 kg le coup)"));
             VraiesStatsPartout = c.CreateEntry("VraiesStatsPartout", true, description: Build.Desc("true = les vraies stats s'appliquent partout (hangar, fiches d'unités, escarmouche, parties sans anti-triche) et pas seulement en mission de campagne. Sous Easy Anti-Cheat, le mod ferme le jeu"));
         }
 
@@ -598,7 +650,7 @@ namespace RealismOverhaul
         }
         internal static MelonPreferences_Entry<bool> VraiesStatsPartout;
         internal static bool EverywhereOn => RealModeOn && VraiesStatsPartout != null && VraiesStatsPartout.Value;
-        static MelonPreferences_Entry<float> _hauteurBat;
+        static MelonPreferences_Entry<float> _hauteurBat, _rayonRavito;
 
         static MelonPreferences_Entry<bool> _artyAuto;
         static MelonPreferences_Entry<float> _furtivite, _batiments, _furtiviteVeh, _couvert, _flash, _couvertBat;
@@ -1021,6 +1073,7 @@ namespace RealismOverhaul
         internal static void Apply(DataBaseService db)
         {
             if (IsApplied) Restore("nouvelle application");
+            ReArmRof();                                                         // a new application retries the unit card's rate-of-fire switch
             var src = db.RawAccess;
             var preset = (Preset.Value ?? "realiste").Trim().ToLowerInvariant();
             bool perso = preset == "perso";
@@ -1202,6 +1255,15 @@ namespace RealismOverhaul
                     // real-scale lots, in this order: validation, writes, read-back and [ECHELLE] summary of every lot (RealStats: all or
                     // nothing per lot, the ballistics lot with its gravity), then the engine values that go with the accepted lots
                     reelSummary = RealStats.Apply(src, EchellePortees.Value, db.CurrentSourceId);
+                    // the ammunition really loaded per main gun, measured on the base RealStats has just written: it writes nothing back,
+                    // it only says what the player gets on each side. Its one-line summary rides the [VRAIES STATS] line, which the
+                    // PUBLIC log always keeps; its detail lines stay under the ordinary limit.
+                    try
+                    {
+                        string mt = MunitionsType.Mesure(src, db.CurrentSourceId);
+                        if (!string.IsNullOrEmpty(mt)) reelSummary += " ; munitions : " + mt;
+                    }
+                    catch (Exception e) { Mod.Log.Warning("[MUNITIONS-TYPE] relevé impossible : " + e.GetBaseException().Message); }
                     ApplyEngineLots(db);
                     Log($"[VRAIES STATS] {reelSummary} ; {JournalCount} valeurs mémorisées pour la restauration");
                     // unit cards show true metres instead of the vanilla x2 (every loaded InfocardConfig: the arsenal card holds its own reference)
@@ -1291,6 +1353,11 @@ namespace RealismOverhaul
                     Log($"[REALISME] tir automatique d'artillerie : {artyUnits.Count} unités, {nAuto} capacités marquées");
                 }
 
+                // ---- vanilla "sneak" order button for recon, snipers and special forces (Discretion, in Reperage.cs):
+                // same data move as the artillery block above, on the same table, with its own measurement stage.
+                // It must run BEFORE UnitCopies.AfterApply so the per-unit copies carry the flag, or the button never shows up.
+                int nSneak = Discretion.Apply(src);
+
                 // ---- infantry inside buildings takes less damage (GameConfig is shared: journaled and restored like everything else).
                 // The config values are the share of the damage a garrisoned squad still takes (floor + perSoldier x soldiers, vanilla
                 // 0.18 / 0.02), so a protection P divides them: P = 1.5 gives 0.12 / 0.0133 (6 men: 0.30 -> 0.20 of the damage).
@@ -1327,6 +1394,58 @@ namespace RealismOverhaul
                     catch (Exception e) { Log("[VRAIES STATS] vitesse de l'infanterie en forêt inchangée : " + e.Message); }
                 }
 
+                // ---- supply crates and depots dropped on the ground cover a real depot's area (GameConfig is shared: journaled and
+                // restored like the rest). SupplyRadius::Init (RVA 0x430820) reads this global value for a dropped crate and sizes its
+                // circle at exactly twice the radius, so the drawing and the effect can never diverge: 50 m was a 100 m wide disc on a
+                // 9 km map (about 1 % of its width), which is why the player never saw it. A real brigade transfer point is 300 x 300 m
+                // (radius about 170 m); 150 m is that, rounded down. The guard only ever raises the value, so a future game update that
+                // already ships a bigger radius keeps its own. Beware (told to the player): the same radius decides supply capture, so an
+                // enemy steals a crate from three times as far; and a bigger circle does not make the crate any tougher.
+                int nSupply = 0;
+                if (reel && !OptionOff("OPTION_RAVITAILLEMENT_ZONE") && _rayonRavito != null)
+                {
+                    try
+                    {
+                        float want = Math.Max(50f, Math.Min(400f, _rayonRavito.Value));
+                        var sc = GameConfig.Instance?.SupplyConfig;
+                        if (sc != null && sc.ResupplyRadius < want - 0.5f)
+                        {
+                            float before = sc.ResupplyRadius;
+                            nSupply = SetJournaled(sc, "ResupplyRadius", want);
+                            Log($"[VRAIES STATS] ravitaillement : rayon des caisses posées {before} -> {sc.ResupplyRadius} m " +
+                                $"(cercle affiché {before * 2} -> {sc.ResupplyRadius * 2} m de large ; les capacités des camions et des VCI passent à 100 m par Capacites.csv)");
+                        }
+                        else if (sc != null)
+                            Log($"[VRAIES STATS] ravitaillement : rayon des caisses déjà à {sc.ResupplyRadius} m (>= {want}), rien écrit");
+                    }
+                    catch (Exception e) { Log("[VRAIES STATS] rayon de ravitaillement inchangé : " + e.Message); }
+                }
+
+                // ---- unloading really takes time (GameConfig is shared: journaled and restored like the rest).
+                // A transport stays put, exposed, while its passengers actually get out. Ground transports are included:
+                // it is the same game value, and the [DEBARQUEMENT] report separates helicopter and ground durations.
+                int nUnload = 0;
+                if (reel && !OptionOff("OPTION_DEBARQUEMENT_LONG"))
+                {
+                    try
+                    {
+                        var gcu = GameConfig.Instance;
+                        if (gcu != null)
+                        {
+                            float before = gcu.TransportUnloadDelay;
+                            if (before > 0f && before < UnloadDelayMax && UnloadDelayFactor > 1f)
+                            {
+                                nUnload = SetJournaled(gcu, "TransportUnloadDelay", before * UnloadDelayFactor);
+                                Log($"[VRAIES STATS] débarquement : délai par unité {before} -> {gcu.TransportUnloadDelay} s " +
+                                    $"(x{UnloadDelayFactor.ToString("0.#", CultureInfo.InvariantCulture)} ; vaut aussi pour les transports terrestres)");
+                            }
+                            else Log($"[VRAIES STATS] débarquement : délai du jeu gardé ({before} s) — mesure en cours ; " +
+                                     "option OPTION_DEBARQUEMENT_LONG");
+                        }
+                    }
+                    catch (Exception e) { Log("[VRAIES STATS] débarquement : délai inchangé : " + e.Message); }
+                }
+
                 // ---- observation height from buildings (fog-of-war terrain settings; journaled like the rest)
                 int nTerrain = 0;
                 if (_hauteurBat.Value > 0 && Math.Abs(_hauteurBat.Value - 1) > 1e-6)
@@ -1344,7 +1463,7 @@ namespace RealismOverhaul
                 AppliedSource = db.CurrentSourceId;
                 // the game keeps its own copy of every row per loaded unit: carry the values applied above to those copies
                 UnitCopies.AfterApply(db, src);
-                AppliedSummary = (reel ? $"VRAIES STATS [{reelSummary}] " : "") + $"preset={preset} munitions={nAmmo} armes={nWeap} capteurs={nSens} blindages={nArm} hélicos={nMob} avions={nPlane} furtivité={nStealth} tirAuto={nAuto} bâtiments={nBuild} forêtInfanterie={nForest} cellules override={nOv} (OTHER={counts.GetValueOrDefault(Family.OTHER)})";
+                AppliedSummary = (reel ? $"VRAIES STATS [{reelSummary}] " : "") + $"preset={preset} munitions={nAmmo} armes={nWeap} capteurs={nSens} blindages={nArm} hélicos={nMob} avions={nPlane} furtivité={nStealth} tirAuto={nAuto} discretion={nSneak} bâtiments={nBuild} forêtInfanterie={nForest} ravitaillement={nSupply} débarquement={nUnload} cellules override={nOv} (OTHER={counts.GetValueOrDefault(Family.OTHER)})";
                 Log($"[REALISME] appliqué à la base '{db.CurrentSourceId}' : {AppliedSummary} ; {JournalCount} valeurs journalisées");
                 Log("[REALISME] familles : " + string.Join(", ", counts.OrderByDescending(k => k.Value).Select(k => $"{k.Key}={k.Value}")));
             }
@@ -1359,6 +1478,15 @@ namespace RealismOverhaul
 
         /// Forest foot speed multiplier of the real stats: 0.75 x 4 km/h cross-country = 3 km/h (17/09/2026).
         const float InfantryForestSpeed = 1f;            // game value: foot speed in forest is left as the game sets it
+
+        /// Unloading takes real time (author request, 2026-09-19): a transport stays exposed while its passengers actually
+        /// get out. Applies to ground transports too, which use the same game value.
+        // MEASURED 2026-09-18 in a live battle: the game unloads in 1 s per unit, and its own BUILDING unload is 4 s.
+        // x4 puts a vehicle at the same 4 s the game already uses for a building - internally consistent, and a squad
+        // leaving an IFV under fire really does take several seconds. Script safety checked the same day: all 72 unload
+        // nodes of the whole campaign carry LiveTime -1, so no scripted unload can time out however long this makes it.
+        const float UnloadDelayFactor = 4f;
+        const float UnloadDelayMax = 60f;                // guard: past that, the value is not what we think it is, so nothing is touched
 
         /// True when this real-stats option name is switched off (OptionsInactives, or a lot suspended by the combat watchdog).
         static bool OptionOff(string name) => OffKeys().Contains(name);
@@ -1450,7 +1578,8 @@ namespace RealismOverhaul
         /// Real metres per raw game metre in real-stats mode (1, or the EchellePortees option): what every displayed distance is multiplied by.
         internal static float DisplayScale => Math.Max(1f, EchellePortees != null ? EchellePortees.Value : 1f);
 
-        /// Real-stats mode: unit cards show true metres (vanilla multiplies raw metres by 2 on the card).
+        /// Real-stats mode: unit cards show true metres (vanilla multiplies raw metres by 2 on the card), and the card's rate-of-fire
+        /// setting is switched on when the game leaves it off (the reload times written on the weapon rows then have a chance to reach the player).
         /// extra == null: GameConfig's InfocardConfig and every loaded InfocardConfig asset; otherwise only that one (a card's own reference).
         internal static void FixCardMultipliers(Il2CppBrokenArrow.Client.Ecs.UI.Infocard.InfocardConfig extra, string where)
         {
@@ -1470,15 +1599,77 @@ namespace RealismOverhaul
                 }
                 var seen = new HashSet<IntPtr>();
                 float target = DisplayScale;
+                int rof = 0;
                 foreach (var ic in list)
                 {
-                    if (!seen.Add(ic.Pointer) || Math.Abs(ic.EffectiveRangeMultiplier - target) <= 1e-6) continue;
+                    if (!seen.Add(ic.Pointer)) continue;
+                    // rate of fire first, and on every config met: a card whose multiplier is already right must get the switch too
+                    int rofHere = ShowRateOfFire(ic, where);
+                    rof += rofHere;
+                    if (Math.Abs(ic.EffectiveRangeMultiplier - target) <= 1e-6) continue;
                     var before = ic.EffectiveRangeMultiplier;
                     SetJournaled(ic, "EffectiveRangeMultiplier", target);
-                    Log($"[VRAIES STATS] fiche d'unité ({where}, '{ic.name}') : multiplicateur de portée {before} -> {ic.EffectiveRangeMultiplier}");
+                    Log($"[VRAIES STATS] fiche d'unité ({where}, '{ic.name}') : multiplicateur de portée {before} -> {ic.EffectiveRangeMultiplier}" +
+                        (rofHere > 0 ? " ; réglage de la cadence de tir activé" : ""));
                 }
+                // only what was really done is claimed: a boolean was written, the game can still hide the block for some weapons
+                if (rof > 0)
+                    Log($"[VRAIES STATS] fiche d'unité ({where}) : réglage de la cadence de tir activé sur {rof} réglage(s) — à vérifier sur une fiche d'unité en jeu");
             }
             catch (Exception e) { Log("[VRAIES STATS] portées affichées sur la fiche inchangées : " + e.Message); }
+        }
+
+        static bool _rofAbsent;                  // property gone from this build of the game: definitive, never retried this session
+        static bool _rofOff;                     // switch refused: this line alone is dropped, the range repair keeps working
+        static int _rofErrors;
+        static bool _rofSeenOn;                  // "the game already has it on" said once: a silent log would look like a failure
+
+        /// A new application of the real stats forgives passing errors on the unit card (an InfocardConfig unloaded by Unity during a
+        /// rescan must not switch the rate of fire off for the rest of the session). A property missing from this build stays locked.
+        static void ReArmRof()
+        {
+            _rofErrors = 0;
+            _rofOff = _rofAbsent;
+        }
+
+        /// The game leaves InfocardConfig.ShowRateOfFireStats switched off, so the reload times the real stats write on the weapon rows
+        /// stayed invisible on the unit card. Journaled write like the rest (the game's value is put back when the mod stops).
+        /// Returns 1 if this config was switched on (0 if it already was). Guarded on its own: a property missing after a game
+        /// update disables this line only, never the range multiplier repaired next to it.
+        static int ShowRateOfFire(Il2CppBrokenArrow.Client.Ecs.UI.Infocard.InfocardConfig ic, string where)
+        {
+            if (_rofOff) return 0;
+            try
+            {
+                var p = Props.Get(ic.GetType(), "ShowRateOfFireStats");
+                if (p == null || !p.CanWrite || p.PropertyType != typeof(bool))
+                {
+                    _rofAbsent = true;
+                    _rofOff = true;
+                    Log("[VRAIES STATS] fiche d'unité : réglage de la cadence de tir absent de cette version du jeu, portées corrigées quand même");
+                    return 0;
+                }
+                if (p.GetValue(ic) is bool already && already)
+                {
+                    // said once per session: without it a game that already ships the setting on writes exactly the same log as a mod that never ran
+                    if (!_rofSeenOn)
+                    {
+                        _rofSeenOn = true;
+                        Log($"[VRAIES STATS] fiche d'unité ({where}) : réglage de la cadence de tir déjà activé par le jeu, rien à écrire");
+                    }
+                    return 0;
+                }
+                Set(ic, p, true);
+                return 1;
+            }
+            catch (Exception e)
+            {
+                bool off = ++_rofErrors >= 3;    // passing errors only: the next application of the real stats tries again (ReArmRof)
+                if (off) _rofOff = true;
+                Log("[VRAIES STATS] fiche d'unité : cadence de tir non activée : " + e.Message
+                    + (off ? " (3 erreurs : réglage laissé de côté jusqu'à la prochaine application des vraies stats)" : ""));
+                return 0;
+            }
         }
 
         internal static int SetJournaled(object obj, string name, object value)
@@ -1498,7 +1689,7 @@ namespace RealismOverhaul
             {
                 var path = Path.Combine(Dir, name);
                 var sb = new StringBuilder();
-                sb.AppendLine("# Référence du preset (générée par le mod, non lue). Pour modifier : copier des lignes dans Multiplicateurs.csv (cellule vide = valeur du preset).");
+                sb.AppendLine("# Référence du preset (écrite par le mod, non lue). Pour modifier : copier des lignes dans Multiplicateurs.csv (cellule vide = valeur du preset).");
                 sb.AppendLine("Family;GroundRange;LowAltRange;HighAltRange;Damage;Penetration;Speed;Dispersion;AimTime");
                 foreach (var kv in BuildPreset(realistic).OrderBy(k => k.Key.ToString()))
                     sb.AppendLine(string.Join(";", new object[] { kv.Key, kv.Value.G, kv.Value.L, kv.Value.H, kv.Value.Dmg, kv.Value.Pen, kv.Value.Speed, kv.Value.Disp, kv.Value.Aim }.Select(Props.Csv)));
@@ -3410,6 +3601,7 @@ namespace RealismOverhaul
             _announced = false;
             Cheats.Reset();
             Assistants.ResetSession();
+            Guard.Run("Renforts.Reset", Renforts.ResetSession);   // before EnemyAi and Spawns: its end-of-battle report reads their counters
             EnemyAi.ResetSession();
             Demolition.ResetSession();
             Spawns.ResetSession();
@@ -3417,16 +3609,24 @@ namespace RealismOverhaul
             S400Mode.ResetSession();
             Reperage.ResetSession();
             LeurresMesure.ResetSession();
+            Guard.Run("LeurresAuto.Reset", LeurresAuto.ResetSession);
             AntiHeliPortee.ResetSession();
             AntiHeliTouches.ResetSession();
+            Guard.Run("Esquive.Reset", Esquive.ResetSession);
             VueAA.ResetSession();
             // v0.23.0 modules: each one on its own guard, so one failure never skips the next reset
             Guard.Run("Missions.Reset", Missions.ResetSession);
             Guard.Run("AltCercles.Reset", AltCercles.ResetSession);
             Guard.Run("CalibreMesure.Reset", CalibreMesure.ResetSession);
             Guard.Run("Couvert.Reset", Couvert.ResetSession);
+            Guard.Run("Retranchement.Reset", Retranchement.ResetSession);
             Guard.Run("Affuts.Reset", Affuts.ResetSession);
-            Guard.Run("Perf.Reset", Perf.ResetSession);                   // counters start with this battle (and a battle closed by no end screen gets its line here)
+            Guard.Run("HeureDuJour.Reset", HeureDuJour.ResetSession);
+            // v0.24.0 modules: each one writes the last summary of the battle that ended, then starts its counters again
+            Guard.Run("Suppression.Reset", Suppression.ResetSession);
+            Guard.Run("Critiques.Reset", Critiques.ResetSession);
+            Guard.Run("Meteo.Reset", Meteo.ResetSession);
+            Guard.Run("Perf.Reset", Perf.ResetSession);                 // counters start with this battle (and a battle closed by no end screen gets its line here)
             _battleEndSent = false;
             BattleOver = false;
             _endPlayed = 0f;
@@ -3486,9 +3686,20 @@ namespace RealismOverhaul
             BattleOver = true;
             Mod.Log.Msg($"[CAMPAGNE] écran de fin de bataille affiché (après {_endPlayed.ToString("0", CultureInfo.InvariantCulture)} s de partie) : bilans de fin de bataille");
             Guard.Run("Missions.FinBataille", Missions.OnBattleEnd);
+            Guard.Run("Renforts.FinBataille", Renforts.OnBattleEnd);
             Guard.Run("CalibreMesure.FinBataille", CalibreMesure.OnBattleEnd);
             Guard.Run("Couvert.FinBataille", Couvert.OnBattleEnd);
+            Guard.Run("Retranchement.FinBataille", Retranchement.OnBattleEnd);
             Guard.Run("Affuts.FinBataille", Affuts.OnBattleEnd);
+            Guard.Run("HeureDuJour.FinBataille", HeureDuJour.OnBattleEnd);   // the battle went to its end: the crash guard of the hour is cleared
+            // v0.24.0 modules: the ones that wrote a value of the game give it back here rather than at the next mission load
+            Guard.Run("Suppression.FinBataille", Suppression.OnBattleEnd);
+            Guard.Run("Critiques.FinBataille", Critiques.OnBattleEnd);
+            Guard.Run("Meteo.FinBataille", Meteo.OnBattleEnd);
+            Guard.Run("Nuit.FinBataille", Nuit.OnBattleEnd);              // its own 2 s tick would do it too: here it is immediate
+            Guard.Run("Silence.FinBataille", SilenceOrdres.OnBattleEnd);
+            Guard.Run("Protection.FinBataille", ProtectionMission.OnBattleEnd);  // the report the author reads after his test
+            Guard.Run("BilanMission.FinBataille", BilanMission.OnBattleEnd);
             Guard.Run("Perf.FinBataille", Perf.EndBattle);               // the battle gets its [PERF] line now, not at the next one
         }
 
@@ -3733,7 +3944,7 @@ namespace RealismOverhaul
                 var fow = cfg?.FogOfWarConfig;
                 if (fow != null)
                 {
-                    Mod.Log.Msg($"[CALIBRAGE] brouillard: minDetect={fow.MinimumDetectionDistance} spotted={fow.SpottedPenalty} spottedBât={fow.SpottedPenaltyBuildings} sneakMin={fow.SneakMinAntivisible} forêtTirMax={fow.MaxShootableForestDistance} antiVisibleMax={fow.MaxAntiVisible}");
+                    Mod.Log.Msg($"[CALIBRAGE] brouillard: minDetect={fow.MinimumDetectionDistance} spotted={fow.SpottedPenalty} spottedBât={fow.SpottedPenaltyBuildings} sneakMin={fow.SneakMinAntivisible} forêtTirMax={fow.MaxShootableForestDistance} antiVisibleMax={fow.MaxAntiVisible} flashMax={fow.MaxFlashValue} flashReduction={fow.FlashReduction}");
                     var ts = fow.TerrainTypeSettings;
                     for (int i = 0; i < (ts?.Length ?? 0); i++)
                     {
@@ -3807,6 +4018,18 @@ namespace RealismOverhaul
                             $"infanterie écartSoldats={(ic == null ? "?" : F(ic.DistanceBetweenSoldiers))} sprintDès={(ic == null ? "?" : F(ic.DistanceForSprint))} arrêtSoldat={(ic == null ? "?" : F(ic.DistanceForSoldierStop))}");
             }
             catch (Exception e) { Mod.Log.Msg("[CALIBRAGE] distances : réglages illisibles : " + e.Message); }
+            try
+            {
+                // read only: every one of these 14 has a setter, but none is written. The crate radius is the one the player asked about;
+                // the rest tells us what a supply tick actually costs and heals, for the next round of work.
+                var sc2 = cfg?.SupplyConfig;
+                if (sc2 != null)
+                    Mod.Log.Msg($"[CALIBRAGE] ravitaillement : rayonCaisse={F(sc2.ResupplyRadius)} (cercle {F(sc2.ResupplyRadius * 2)} de large) vue={F(sc2.ViewDistance)} " +
+                                $"cercleEnnemiVisible={sc2.ShowEnemySupplyRadius} ; achat={sc2.SupplyValueBought} change={sc2.SupplyExchangeRate} coûtMunitions=x{F(sc2.AmmoCostMultiplier)} " +
+                                $"réparation={F(sc2.RepairRate)}/{F(sc2.RepairCost)} soins={F(sc2.HealingRate)}/{F(sc2.HealingCost)} ; " +
+                                $"capacité débit={F(sc2.AbilityResupplyRate)} soins x{F(sc2.AbilityMultiplierHeal)} réparation x{F(sc2.AbilityMultiplierRepair)} réarmement x{F(sc2.AbilityMultiplierRearm)}");
+            }
+            catch (Exception e) { Mod.Log.Msg("[CALIBRAGE] ravitaillement : réglages illisibles : " + e.Message); }
             try
             {
                 Mod.Log.Msg($"[CALIBRAGE] laser : dégagementSol={F(Il2CppBrokenArrow.Client.Ecs.BattleSystem.Guidance.Systems.LaserDesignatorSystem.GROUND_CLEARANCE)} " +

@@ -9,9 +9,13 @@
 //  - Clicks: the mod reads the mouse itself (press then release over the same widget; a click on a cloned native widget has
 //    never been observed in this game); vanilla callbacks (TabButton.OnSelected, Button.onClick) are a secondary path that is
 //    ignored once the mouse path has worked. A click is refused when a game popup or a game button covers the widget.
-//  - Rows: ONLY the cheats (title "Triche" + one row per Cheats kind 0..Cheats.KindCount-1; label, description and key come
-//    from the UI-agnostic Cheats API: toggles and one-shots, immediate actions, never part of the game's Apply/Reset).
-//    Every other mod feature is always on and has no row. The Pref row kind (MelonPreferences by category + name) is kept but unused.
+//  - Rows: the player's own choices and the cheats. "Mission" holds two choice rows ("Heure de la mission", HeureDuJour.cs, and
+//    "Durée des épaves", Epaves.cs): a Pref row cycles through named values of a MelonPreferences entry, with its label, its value names
+//    and its description in the game's language, the description coming from the module and rebuilt only when the module's state or the
+//    chosen value changed.
+//    Then "Triche" (one row per Cheats kind 0..Cheats.KindCount-1; label, description and key come from the UI-agnostic Cheats API:
+//    toggles and one-shots, immediate actions, never part of the game's Apply/Reset).
+//    Every mod FEATURE is always on and has no row: only the cheats are switches, a choice row is a player's choice, not a switch.
 //    Below the cheats, an "À propos" block: one info row (name, version, author) and two link rows (Steam, Discord) opened with
 //    Application.OpenURL.
 //  - Texts: every label, state word and description comes from Txt.cs in the game's language and is rewritten when that language
@@ -53,6 +57,17 @@ namespace RealismOverhaul
     [HarmonyPatch(typeof(SettingsScreen), nameof(SettingsScreen.OnInitialize))]
     static class Patch_ModTabInit
     {
+        /// Harmony calls this before patching the class, i.e. from Mod.ApplyPatches during OnInitializeMelon: the only startup-time
+        /// entry point ModTab.cs owns. The wreck-duration preference is created here so it exists long before the Options window is
+        /// built (its row needs it) and so a value saved in a previous session is read back. Never returns false and never throws:
+        /// a failure here would disable the tab's own postfix.
+        static bool Prepare()
+        {
+            try { Epaves.CreatePrefs(); }
+            catch (Exception e) { try { Mod.Log.Warning("[EPAVES] réglage non créé : " + e.GetBaseException().Message); } catch { } }
+            return true;
+        }
+
         static void Postfix(SettingsScreen __instance)
         {
             try { ModTab.Note(__instance, "postfix OnInitialize"); } catch { }
@@ -129,10 +144,14 @@ namespace RealismOverhaul
             public Kind K;
             public string Label, Desc, Cat, Name;
             public string LogName;                              // French name for the log (Title, Info and Link rows; cheat rows compute theirs)
-            public TxtKey TitleKey;                             // Title rows: text key of the label
+            public TxtKey TitleKey;                             // Title and Pref rows: text key of the label
             public TxtKey DescKey;                              // Link rows: text key of the description
             public string Url;                                  // Link rows only
             public List<(object V, string T)> Choices;
+            public (string V, TxtKey K)[] ChoiceKeys;           // Pref rows: text key of each value (relabelled with the game's language)
+            public Func<Lang, string> DescFn;                   // Pref rows whose description follows what the mod answered
+            public Func<int> DescVer;                           // that description is rebuilt only when this number changes
+            public int DescEpoch = int.MinValue;
             public int Cheat;                                   // Cheats kind (0..Cheats.KindCount-1); 0..3 toggles, 4..6 one-shots
             public GO Go, DisabledBg;
             public RT Rt;
@@ -152,7 +171,11 @@ namespace RealismOverhaul
         // ============================================================ entry point (Mod.OnUpdate, before the Actif check)
         internal static void Frame()
         {
-            if (_disabled || Mod.AntiCheatActive || Identite.Blocked) return;
+            if (Mod.AntiCheatActive || Identite.Blocked) return;
+            // the wreck duration is a player's choice, not a piece of the tab: it keeps working (and keeps giving the game its own value
+            // back) even after 20 errors have switched the tab itself off. It throttles itself to one pass every 2 s and never throws.
+            Epaves.Tick();
+            if (_disabled) return;
             try { FrameBody(); }
             catch (Exception e) { Fail("ModTab.Image", e); }
         }
@@ -1196,11 +1219,23 @@ namespace RealismOverhaul
                         r.Label = Txt.T(r.TitleKey);
                         if (r.NameText != null) r.NameText.text = r.Label;
                     }
+                    else if (r.K == Kind.Pref) PrefTexts(r);
                     else if (r.K == Kind.Info) InfoTexts(r);
                     else if (r.K == Kind.Link) r.Desc = LinkDesc(r);
                 }
                 catch { }
             }
+        }
+
+        /// Choice row: label and value names in the game's language; its description is rebuilt at the next refresh.
+        static void PrefTexts(Row r)
+        {
+            var lang = Txt.Current;
+            r.Label = Txt.Get(lang, r.TitleKey);
+            if (!r.Fallback && !r.Inline && r.NameText != null) { try { r.NameText.text = r.Label; } catch { } }
+            if (r.ChoiceKeys != null && r.Choices != null)
+                for (int i = 0; i < r.Choices.Count && i < r.ChoiceKeys.Length; i++) r.Choices[i] = (r.Choices[i].V, Txt.Get(lang, r.ChoiceKeys[i].K));
+            r.DescEpoch = int.MinValue;
         }
 
         static void InfoTexts(Row r)
@@ -1236,6 +1271,13 @@ namespace RealismOverhaul
                     try { cur = MelonPreferences.GetEntry(r.Cat, r.Name)?.BoxedValue; } catch { }
                     int i = IndexOf(r, cur);
                     text = i >= 0 ? r.Choices[i].T : Fmt(cur);
+                    // description built by the module: rebuilt only when its own state or the chosen value changed
+                    if (r.DescFn != null)
+                    {
+                        int v = 0;
+                        try { v = r.DescVer != null ? r.DescVer() : 0; } catch { v = 0; }
+                        if (v != r.DescEpoch) { r.DescEpoch = v; try { r.Desc = r.DescFn(Txt.Current); } catch { } }
+                    }
                 }
                 else
                 {
@@ -1363,7 +1405,8 @@ namespace RealismOverhaul
         static string Fmt(object v) => v == null ? "?" : v is IFormattable f ? f.ToString(null, CultureInfo.InvariantCulture) : v.ToString();
 
         // ============================================================ row table (texts in the game's language, Txt.cs)
-        // Only the cheats are settings: every other mod feature is always on and has no row. The "À propos" block comes last.
+        // Only the cheats are switches; a choice row is a player's choice, not a feature switch. Every mod feature is always on and
+        // has no row. Order: the player's choices ("Mission"), then "Triche", then the "À propos" block.
         static List<Row> Defs()
         {
             var l = new List<Row>();
@@ -1376,6 +1419,29 @@ namespace RealismOverhaul
                 r.Desc = LinkDesc(r);
                 l.Add(r);
             }
+            // A row that cycles through named values of a MelonPreferences entry; description and version come from the module that owns it.
+            void Choice(string cat, string name, TxtKey label, (string V, TxtKey K)[] values, Func<Lang, string> desc, Func<int> ver)
+            {
+                bool exists = false;
+                try { exists = MelonPreferences.GetEntry(cat, name) != null; } catch { }
+                if (!exists || values == null || values.Length == 0) { Log($"réglage {cat}/{name} introuvable : ligne non ajoutée"); return; }
+                var r = new Row
+                {
+                    K = Kind.Pref, Cat = cat, Name = name, TitleKey = label, Label = Txt.Get(lang, label), LogName = Txt.Fr(label),
+                    ChoiceKeys = values, DescFn = desc, DescVer = ver, Choices = new List<(object V, string T)>(values.Length),
+                };
+                foreach (var v in values) r.Choices.Add((v.V, Txt.Get(lang, v.K)));
+                try { r.Desc = desc(lang); r.DescEpoch = ver(); } catch { r.Desc = ""; }
+                l.Add(r);
+            }
+
+            // the player's own choices come first: they are not cheats, and only the cheats are switches
+            Title(TxtKey.MT_TITLE_MISSION);
+            Choice(HeureDuJour.PrefCat, HeureDuJour.PrefName, TxtKey.HD_LABEL, HeureDuJour.Valeurs, HeureDuJour.RowDesc, () => HeureDuJour.EtatVersion);
+            // Wreck duration row withheld from this build (2026-09-18): the module measures only and changes nothing,
+            // so a row here would promise the player something that does not happen yet. Restore this single line
+            // once a test session has timed a real body and a real hull and Epaves.cs writes again.
+            //             Choice(Epaves.PrefCat, Epaves.PrefName, TxtKey.EP_LABEL, Epaves.Valeurs, Epaves.RowDesc, () => Epaves.EtatVersion);
 
             Title(TxtKey.MT_TITLE_CHEATS);
             for (int k = 0; k < Cheats.KindCount; k++) Cheat(k);

@@ -75,7 +75,7 @@ namespace RealismOverhaul
     {
         internal const int IdOffset = 20000;
         const int IdSpan = 10000;
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const string OptionName = "OPTION_PRECISION_ANTIHELICO";
         const string CsvFile = "PrecisionAntiHelico.csv";
         const string Safety = "Sécurité automatique, ne pas modifier";

@@ -1,5 +1,5 @@
 # Broken Arrow Realism Overhaul - vraies stats (données v1). Fichier généré par le mod à chaque version : pour changer une valeur, utiliser les fichiers *_override.csv du dossier parent.
-Option;Id;Name;GroundRange;MuzzleVelocity;MaxSpeed;BurnTime;MaxSeekerDistance;Damage;LowAltRange;PenetrationAtMinRange;PenetrationAtGroundRange;MinimalRange;Acceleration;PreventReloadWhileTracked;HighAltRange;IgnoreCover;TargetType;HealthAOERadius;DispersionHorizontalRadius;DispersionVerticalRadius;ResupplyTime;NonSeadProjectileRangeOverride;SeadProjectileRangeOverride;TopArmorAttack;RadioFuseDistance;SmokeRadius
+Option;Id;Name;GroundRange;MuzzleVelocity;MaxSpeed;BurnTime;MaxSeekerDistance;Damage;LowAltRange;PenetrationAtMinRange;PenetrationAtGroundRange;MinimalRange;Acceleration;PreventReloadWhileTracked;HighAltRange;IgnoreCover;TargetType;HealthAOERadius;DispersionHorizontalRadius;DispersionVerticalRadius;ResupplyTime;NonSeadProjectileRangeOverride;SeadProjectileRangeOverride;TopArmorAttack;RadioFuseDistance;SmokeRadius;SupplyCost
 ;11;Round 125 2A46M AP T72B T72A T1;3000;1700;;;;;;;;;;;;;;;;;;;;;
 ;264;Round 125 2A46M AP T72BA T2;3000;;;;;;;;;;;;;;;;;;;;;;
 ;54;Round 125 2A46M HE T72B T72A T1;5000;850;;;;;;;;;;;;;;;;;;;;;
@@ -1034,7 +1034,7 @@ OPTION_VOL_BAS_REALISTE;392;InfRocket 140 SRAW HE;;;;;;;200;;;;;;;;;;;;;;;;
 # OPTION_VISEE_OEIL : mitrailleuses d'infanterie visées à l'œil (PKM des réservistes) : 600 m au sol. Identique pour les deux camps. Fichier généré.
 OPTION_VISEE_OEIL;75;InfBullet 7.62x54 MG T1;600;;;;;;;;;;;;;;;;;;;;;;;
 OPTION_VISEE_OEIL;365;InfBullet 7.62x54 MG T0;600;;;;;;;;;;;;;;;;;;;;;;;
-# OPTION_PORTEES_MINI_REELLES : distance minimale de tir réelle de l'artillerie : obusiers de 152-155-203 mm 3 km, de 105-122 mm 2 km, Nona/Vena/Magnolia 1,7 km (fumigènes 400 m), mortiers de 120 mm 200 m, 81-82 mm 80-91 m, Vasilek 770 m, Grad 5 km, TOS-1 500 m, TOS-1A 400 m, TOS-2 1,6 km, HIMARS/MLRS, Smerch, Uragan, ATACMS, Iskander, PrSM et Tochka 4,5 km (leur vrai minimum dépasse la carte), missiles S-300V 6 km et 4,5 km, Buk-M3 2,5 km. Identique pour les deux camps. Fichier généré.
+# OPTION_PORTEES_MINI_REELLES : distance minimale de tir réelle de l'artillerie : obusiers de 152-155-203 mm 3 km, de 105-122 mm 2 km, Nona/Vena/Magnolia 1,7 km (fumigènes 400 m), mortiers de 120 mm 200 m, 81-82 mm 80-91 m, Vasilek 770 m, Grad 5 km, TOS-1 500 m, TOS-1A 400 m, TOS-2 1,6 km, A-22 Ogon 1,5 km, HIMARS/MLRS, Smerch, Uragan, ATACMS, Iskander, PrSM et Tochka 4,5 km (leur vrai minimum dépasse la carte), missiles S-300V 6 km et 4,5 km, Buk-M3 2,5 km. Identique pour les deux camps. Fichier généré.
 OPTION_PORTEES_MINI_REELLES;4;Shell 155 M284 M109A7 HE;;;;;;;;;;3000;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;228;Shell 152 2A88 HE;;;;;;;;;;3000;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;229;Shell 152 2A88 Rad HE-RAP;;;;;;;;;;3000;;;;;;;;;;;;;;
@@ -1122,6 +1122,7 @@ OPTION_PORTEES_MINI_REELLES;73;MLRS 122 Grad SMK;;;;;;;;;;5000;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;178;MLRS 220 TOS1 Thermobaric;;;;;;;;;;500;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;179;MLRS 220 TOS1A Thermobaric;;;;;;;;;;400;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;215;MLRS 220 TOS2 Thermobaric;;;;;;;;;;1600;;;;;;;;;;;;;;
+OPTION_PORTEES_MINI_REELLES;535;MLRS 140 A22 Ogon HE ;;;;;;;;;;1500;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;138;Missile AA S300V Small;;;;;;;;;;6000;;;;;;;;;;;;;;
 OPTION_PORTEES_MINI_REELLES;226;Missile AA BUK M3;;;;;;;;;;2500;;;;;;;;;;;;;;
 # OPTION_FUMEE_REELLE : rayon du rideau de fumée des obus fumigènes de 152-155 mm : 100 m. Identique pour les deux camps. Fichier généré.
@@ -1391,3 +1392,41 @@ OPTION_BALISTIQUE_REELLE;171;Round 105 M68 XM35 HESH T2;;730;;;;;;;;;;;;;;;;;;;;
 OPTION_BALISTIQUE_REELLE;504;Round 105 XM35 HESH T3;;730;;;;;;;;;;;;;;;;;;;;;;
 OPTION_BALISTIQUE_REELLE;57;Round 105 M102 (AC-130);;494;;;;;;;;;;;;;;;;;;;;;;
 OPTION_BALISTIQUE_REELLE;448;Shell 127 Mark45 AA;;808;;;;;;;;;;;;;;;;;;;;;;
+# OPTION_MISSILE_ANTIAERIEN_LETAL : un missile sol-air qui touche met l'hélicoptère à terre en deux coups, quel que soit l'hélicoptère (il n'existe pas d'hélicoptère blindé). Les fiches du jeu donnaient 7 ou 8 points de dégâts aux missiles d'épaule et de véhicule légers pour 15 points de vie, et le blindage d'un hélicoptère (valeur 30 sur un Ka-52 ou un Mi-28, 20 sur un Apache ou un Mi-24, 10 sur un UH-60 ou un Mi-8) en retirait encore une part : il fallait TROIS missiles sur un hélicoptère d'attaque. Dégâts portés à 11 : sur le mieux protégé il reste 9,6 (2 coups = 19,3 pour 15 points de vie), sur le moins protégé 10,8 (2 coups = 21,7, assez pour un Mi-26 de 20 points), et un seul coup ne suffit jamais. Les canons et les mitrailleuses ne changent pas, le blindage des hélicoptères ne change pas : seule la charge du missile change. Missiles lourds inchangés (Strela-10 11, Sosna 12,5, Tunguska 13, Tor 14, Osa 15, Pantsir 15, AMRAAM 15, AIM-9 13 : ils tuaient déjà en deux coups), missiles air-air des avions et des hélicoptères inchangés. '>=' = au moins cette valeur : une mise à jour du jeu qui monterait plus haut garde sa valeur. Identique pour les deux camps.
+OPTION_MISSILE_ANTIAERIEN_LETAL;462;Missile AA StingerF MANPAD;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;474;Missile AA StingerJ MANPAD;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;18;Missile AA Stinger Vehicles;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;403;Missile A2A Stinger UAV;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;106;Missile AA IglaN;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;127;Missile AA IglaS;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;97;Missile AA Verba;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;601;Missile AA Mistral3 Vehicles;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;597;Missile AA Piorun;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;598;Missile AA Grom;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;573;Missile AA RBS70 Bolid Vehicles;;;;;;>=11
+OPTION_MISSILE_ANTIAERIEN_LETAL;599;Missile AA RBS70 Bolid Infantry;;;;;;>=11
+# OPTION_RAVITAILLEMENT_POIDS : prix d'un missile guidé en kilos de ravitaillement. Règle unique : le prix d'un coup, c'est le poids réel du coup, compté deux fois pour un missile (le conteneur scellé et la manutention comptent, et un missile doit rester cher à remplacer). Missiles antichars d'infanterie et de véhicule 150 -> 60 kg (Javelin 22 kg en tube, TOW 28 kg, Kornet 29 kg, Spike 13 à 26 kg, MAPATS 29 kg, BILL 27 kg, Bulat 28 kg). Missiles lourds et missiles d'hélicoptère 150 -> 100 kg (Hellfire et JAGM 49 kg, Vikhr 45 kg, Ataka 49 kg, Khrizantema 54 kg). Obus de char, obus d'artillerie, roquettes et bombes inchangés : leurs valeurs étaient déjà justes (obus de 120 mm 20 kg pour 22 kg réels, obus de 155 mm 50 kg pour 50 kg réels, Mk-84 1000 kg pour 907 kg réels). Missiles sol-air portables inchangés à 50 kg (19 à 22 kg réels, déjà juste). LMUR (105 kg) et Hermes-A laissés à 150 : ils sont déjà moins chers que leur poids réel. Effet : un Kornet-T passe de 4650 à 2460 kg pour un plein, un Stryker ATGM de 3216 à 1776 kg, un LAV-AT de 4416 à 2256 kg ; le char Abrams (934 kg) et le T-90M (1121 kg) ne bougent pas. Identique pour les deux camps. Fichier généré.
+OPTION_RAVITAILLEMENT_POIDS;44;Missile AT Javelin;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;508;Missile AT JavelinLWCLU;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;5;Missile AT TOW2A;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;52;Missile AT TOW2B;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;63;Missile AT Kornet;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;131;Missile AT KornetM;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;202;Missile AT KornetM Thermobaric;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;515;Missile AT Kornet Thermobaric;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;551;Missile AT Kornet TracReload;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;552;Missile AT Kornet Thermobaric TracReload;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;485;Missile AT SpikeSR;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;549;Missile AT Spike LR;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;346;Missile AT Bulat;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;574;Missile AT MAPATS;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;572;Missile AT RBS56;;;;;;;;;;;;;;;;;;;;;;;;;60
+OPTION_RAVITAILLEMENT_POIDS;13;Missile AT Hellfire Longbow;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;164;Missile AT Hellfire;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;456;Missile AT Hellfire JAGM;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;83;Missile AT Vikhr;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;123;Missile AT AtakaM;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;555;Missile AT AtakaM TracReload;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;556;Missile AT AtakaM Thermobaric TracReload;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;203;Missile AT Khrizantema;;;;;;;;;;;;;;;;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_POIDS;494;Missile AT Khrizantema Thermobaric;;;;;;;;;;;;;;;;;;;;;;;;;100

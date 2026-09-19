@@ -455,7 +455,7 @@ namespace RealismOverhaul
             int sepIdx = num.LastIndexOfAny(new[] { '.', ',' });
             int fraction = sepIdx >= 0 ? num.Length - sepIdx - 1 : 0;
             bool thousands = sepIdx >= 0 && fraction == 3 && !kmUnit;
-            bool km = kmUnit || (sepIdx >= 0 && !thousands);                              // "1.2" without unit is kilometres
+            bool km = kmUnit || (sepIdx >= 0 && !thousands);                              // "1.1" without unit is kilometres
             char sep = sepIdx >= 0 && !thousands ? num[sepIdx] : '.';
             int decimals = sepIdx >= 0 && !thousands ? fraction : 0;
 

@@ -362,7 +362,7 @@ namespace RealismOverhaul
 
     static class CalibreMesure
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const int MaxErrors = 50;
         const int QueueSize = 2048;                                  // power of two
         const int DetailBudget = 12, DetailInfantryBudget = 3;       // detailed hit lines per 30 s

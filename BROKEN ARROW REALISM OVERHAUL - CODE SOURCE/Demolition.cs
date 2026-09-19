@@ -9,10 +9,19 @@
 //  building-entry destinations of script orders, tags named by building script nodes, buildings holding script infantry). Checked when
 //  the job is planned and again when it runs; while that protection is not built yet, nothing is destroyed. The game's own building
 //  damage is untouched. Log: [BATIMENT] ... protégé.
+// v1.3: a segment that HOLDS A SQUAD and has a live supply crate within the game's supply radius is spared as well (the crate is what
+//  keeps the strongpoint standing: sandbags, props and timber off the truck). This is the honest half of the repair the author asked
+//  for: the mod cannot raise a building's real health without Entity.Get<HealthComponent>(), which the project forbids, so it does not
+//  pretend to - it only stops its OWN extra demolition. The game's own collapse at zero health still happens, which is why this can
+//  never keep a mission from finishing: skipping an extra destruction only leaves the map closer to vanilla. The crate must belong to
+//  the SIDE that holds the building, so the player's own truck never saves the block the enemy is holding. Checked once, at the last
+//  moment before the irreversible call and only for a segment that really exists, so it costs two or three Lua searches per real
+//  destruction and nothing per frame.
 using System;
 using System.Collections.Generic;
 using MelonLoader;
 using Il2CppBrokenArrow.Client.Ecs.Configs;
+using Il2CppBrokenArrow.MissionEditor.LuaBridge;
 using BSvc = Il2CppBrokenArrow.Client.Ecs.Building.BuildingService;
 using BSeg = Il2CppBrokenArrow.Client.Ecs.Building.BuildingSegmentComponent;
 using Shooter = Il2CppBrokenArrow.Client.Ecs.BattleSystem.Components.ShooterInfo;
@@ -26,7 +35,7 @@ namespace RealismOverhaul
 {
     static class Demolition
     {
-        static MelonPreferences_Entry<bool> _on, _online; static MelonPreferences_Entry<float> _heavy, _neigh;
+        static MelonPreferences_Entry<bool> _on, _online, _supplyHold; static MelonPreferences_Entry<float> _heavy, _neigh;
         sealed class Seg { public int Id; public BSeg C; public UGameObject Obj; public float Last, X, Z; public bool Dead; }
         static readonly List<Seg> _segs = new(); static readonly Dictionary<int, Seg> _byId = new();
         static readonly HashSet<int> _done = new(); static readonly Queue<int> _jobs = new();
@@ -36,6 +45,11 @@ namespace RealismOverhaul
         static int _calibSkipped, _calibLines, _destroyed, _noRuin, _notFound, _skippedRuin, _heavyLogs, _heavyHidden;
         static int _protected, _protectedUnknown, _protectedLate, _protLogs;                  // segments spared by the mission protection (planned, protection not ready, at run time)
         const int MaxProtLogs = 20;
+        static LuaMap _map; static bool _supplyBroken; static int _supplied, _supplyLogs;      // segments spared because a squad holds them with supply in range
+        const int MaxSupplyLogs = 10;
+        const float SegSearch = 6f;                  // metres around the segment's shoot position: enough to find that very segment
+        const float HoldSearch = 25f;                // metres around that same position: the squad holding the segment, whatever side it is
+        const float DefaultSupplyRadius = 150f;      // used only when SupplyConfig cannot be read
         static string _coopErr;
         static BSvc _failSvc; static GameSessionContext _failCtx; static int _failCount;   // held wrappers (no address reuse): Setup give-up
         const int MaxPerStep = 2;            // DestroyBuilding calls per drain step (Instantiate + Physics.SyncTransforms each)
@@ -51,6 +65,9 @@ namespace RealismOverhaul
             _heavy = c.CreateEntry("SeuilLourd", 50f, description: Build.Desc("Dégâts bâtiment d'un impact à partir desquels le bâtiment est rasé (minimum 25, voir lignes [BATIMENT] du log)"));
             _neigh = c.CreateEntry("SeuilVoisins", 80f, description: Build.Desc("À partir de ces dégâts, les segments voisins (4 max) sont aussi rasés"));
             _online = c.CreateEntry("DemolitionEnLigne", false, description: Build.Desc("true = aussi en coop en ligne (RISQUE de désynchronisation)"));
+            _supplyHold = c.CreateEntry("RavitaillementTientLeBatiment", true, description: Build.Desc(
+                "Un bâtiment occupé par une escouade et situé dans un cercle de ravitaillement DE SON CAMP n'est jamais rasé par le mod (le jeu peut toujours l'effondrer normalement)",
+                "Une caisse de ravitaillement du même camp empêche le mod de raser le bâtiment tenu par ces hommes."));
         }
 
         /// Per-battle reset (Campaign.ResetSession: mission start, restart, campaign end).
@@ -59,6 +76,7 @@ namespace RealismOverhaul
             Clear();
             _nextSetup = 0; _nextCalib = 0; _calibSkipped = 0; _calibLines = 0;
             _protected = _protectedUnknown = _protectedLate = _protLogs = 0;
+            _map = null; _supplyBroken = false; _supplied = 0; _supplyLogs = 0;
             _everOnline = false;   // co-op latch: kept across Clear() (ctx can be null for a moment around a reconnect)
             _failSvc = null; _failCtx = null; _failCount = 0;
         }
@@ -142,7 +160,8 @@ namespace RealismOverhaul
             else if (done > 0)
                 Log($"file vidée : {_destroyed} détruit(s) au total" + (_noRuin > 0 ? $", dont {_noRuin} sans ruine visible" : "") +
                     (_skippedRuin > 0 ? $", {_skippedRuin} déjà en ruine entre-temps" : "") + (_notFound > 0 ? $", {_notFound} introuvable(s)" : "") +
-                    (_protected + _protectedUnknown + _protectedLate > 0 ? $" ; épargnés pour la mission : {_protected} (+{_protectedLate} au moment de raser, +{_protectedUnknown} protection pas prête)" : ""));
+                    (_protected + _protectedUnknown + _protectedLate > 0 ? $" ; épargnés pour la mission : {_protected} (+{_protectedLate} au moment de raser, +{_protectedUnknown} protection pas prête)" : "") +
+                    (_supplied > 0 ? $" ; épargnés parce qu'une escouade les tient avec du ravitaillement à portée : {_supplied}" : ""));
         }
 
         static BSvc Resolve(out bool viaSession)
@@ -293,10 +312,83 @@ namespace RealismOverhaul
                 else if (!_notFoundLogged) { _notFoundLogged = true; Log($"seg={id} introuvable (les suivants sont seulement comptés)"); }
                 return;
             }
+            // asked last, once the segment is known to exist: it is the only line here that searches the map
+            if (HeldAndSupplied(s))
+            {
+                _supplied++;
+                if (_supplyLogs++ < MaxSupplyLogs) Log($"seg={id} pos=({s.X:0},{s.Z:0}) : tenu par une escouade avec le ravitaillement de SON camp à portée, non rasé");
+                return;
+            }
             var sh = new Shooter();                 // zeroed boxed struct, like NodeDestroyBuilding.OnActivated
             _bs.DestroyBuilding(ref e, ref sh, -1);  // -1 = random ruin prefab (vanilla)
             _destroyed++;
             try { if (!IsRuin(s)) _noRuin++; } catch { }
+        }
+
+        /// True when a squad is inside this segment AND a live supply crate OF THAT SQUAD'S OWN SIDE stands within the game's supply
+        /// radius: the mod then leaves the building alone. The side matters: without it the player's own supply truck parked behind
+        /// his line would spare the block the enemy is holding in front of it - and with the mod's wider supply radius it would do so
+        /// from three times as far. The garrison's side is read from the units standing on the segment and the crate is asked for with
+        /// that same side, so both answers come from the same bridge and the same numbering.
+        /// Fails OPEN (destroys) when the search is unreadable, so a broken Lua bridge can only bring back the module's normal
+        /// behaviour instead of silently switching demolition off. Called at most a few times per second, never per frame.
+        static bool HeldAndSupplied(Seg s)
+        {
+            if (_supplyHold == null || !_supplyHold.Value) return false;
+            try
+            {
+                _map ??= new LuaMap();
+                var pos = new UnityEngine.Vector3(s.X, s.C.ShootPosition.y, s.Z);
+                var near = _map.GetBuildingsInRange(pos, SegSearch);
+                int len = near == null ? 0 : near.Length;
+                bool held = false;
+                for (int i = 0; i < len && !held; i++)
+                {
+                    var b = near[i];
+                    if (b == null) continue;
+                    var seg = b.Segment;
+                    if (seg == null || seg.Id != s.Id) continue;
+                    held = b.HasUnitsInside();
+                }
+                if (!held) return false;
+                int side = SideHolding(pos);
+                if (side < 0) return false;                       // nobody identified around the segment: the building is razed as usual
+                var depot = _map.GetNearestSupplyPoint(pos, SupplyRadius(), side, -1);
+                return depot != null && depot.IsAlive() && depot.GetSupplyAmount() > 0;
+            }
+            catch (Exception e)
+            {
+                if (!_supplyBroken) { _supplyBroken = true; Log("occupation ou ravitaillement du bâtiment illisible (" + e.GetBaseException().Message + ") : la règle « le ravitaillement tient le bâtiment » ne s'applique pas"); }
+                return false;
+            }
+        }
+
+        /// Side of the units standing on this segment, or -1 when none is found. The two sides are asked in turn, exactly as the
+        /// shared unit scan does (GetUnits(..., side, -1)), so the number returned means the same thing as the crate filter below.
+        static int SideHolding(UnityEngine.Vector3 pos)
+        {
+            for (int side = 0; side < 2; side++)
+            {
+                Il2CppInterop.Runtime.InteropTypes.Arrays.Il2CppReferenceArray<LuaUnit> arr = null;
+                try { arr = _map.GetUnits(pos, HoldSearch, side, -1); } catch { return -1; }
+                for (int i = 0; i < (arr?.Length ?? 0); i++)
+                {
+                    try { var u = arr[i]; if (u != null && u.IsAlive()) return side; } catch { }
+                }
+            }
+            return -1;
+        }
+
+        /// The game's own supply radius: the very number the circle on screen draws at exactly twice its value.
+        static float SupplyRadius()
+        {
+            try
+            {
+                float r = GameConfig.Instance?.SupplyConfig?.ResupplyRadius ?? 0f;
+                if (r > 1f && r <= 5000f) return r;
+            }
+            catch { }
+            return DefaultSupplyRadius;
         }
 
         /// Solo / online from the network state only: in a campaign the AI players are not flagged IsBot, so counting humans is wrong (it read 8 in solo).

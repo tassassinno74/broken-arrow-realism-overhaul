@@ -1,14 +1,14 @@
-# Broken Arrow Realism Overhaul - vraies stats : leurres (flares) des hélicoptères et avions. Hélicoptères : une salve toutes les 2,5 s au plus pendant une attaque (le jeu lâche une salve par seconde d'attaque et non par missile : avec 2,5 s entre deux salves, qui brûlent chacune 2,9 s, un leurre brûle toujours pendant l'attaque et le stock dure 2,5 fois plus longtemps) ; stock de base 30 salves sur la ligne de capacité (Mi-24K 64), puis stock propre à chaque hélicoptère écrit sur sa copie (reel/LeurresParUnite.csv : Mi-24, Mi-35 et Mi-28 64 ; Ka-52, Apache et autres hélicoptères d'attaque ou d'observation 30 ; transports légers 15 ; transports moyens, lourds et forces spéciales 30). Coût de ravitaillement par salve = 1000 / stock (un plein complet coûte toujours 1000). Avions inchangés : chasseurs 16, A-10/Su-25 40, B-52 25, au plus une salve toutes les 3 s (B-52 4 s). Chaque salve brûle 2,9 s, effet par salve 0.65. Identique pour le joueur et l'IA. Option coupable : OPTION_LEURRES_DEVIATION. Fichier généré.
-Option;Id;Name;DecoyQuantity;DecoyAccuracyMultiplier;DecoyDuration;DecoyCooldown;DecoySupplyCost;SprintDuration;SprintCooldown;LaserMaxRange
-OPTION_LEURRES_DEVIATION;21;ECM Heli 25 Default;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;22;ECM Heli 10 Default;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;23;ECM Heli 05 Default;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;24;ECM Heli 00 Default;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;25;ECM Heli 15 Default;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;26;ECM Heli 20 Default;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;84;ECM Heli 05 +Laser Mi24K;64;0.65;2.9;2.5;15.6
-OPTION_LEURRES_DEVIATION;86;ECM Heli 25 Model;30;0.65;2.9;2.5;33.3
-OPTION_LEURRES_DEVIATION;302;ECM Heli 20 Model;30;0.65;2.9;2.5;33.3
+# Broken Arrow Realism Overhaul - vraies stats : leurres (flares) des hélicoptères et avions. Hélicoptères : une salve par seconde au plus (choix du joueur : un hélicoptère doit pouvoir répondre à un missile chaque seconde ; le mod demande une salve pour chaque missile infrarouge qui vise l'appareil, et chaque salve brûle 2,9 s, donc un leurre brûle toujours pendant l'attaque). Conséquence acceptée : le stock part environ 2,5 fois plus vite qu'avec l'ancien intervalle de 2,5 s ; les stocks ne sont pas augmentés pour compenser. Stock de base 30 salves sur la ligne de capacité (Mi-24K 64), puis stock propre à chaque hélicoptère écrit sur sa copie (reel/LeurresParUnite.csv : Mi-24, Mi-35 et Mi-28 64 ; Ka-52, Apache et autres hélicoptères d'attaque ou d'observation 30 ; transports légers 15 ; transports moyens, lourds et forces spéciales 30). Coût de ravitaillement par salve = 1000 / stock (un plein complet coûte toujours 1000) : règle inchangée. Avions inchangés : chasseurs 16, A-10/Su-25 40, B-52 25, au plus une salve toutes les 3 s (B-52 4 s). Chaque salve brûle 2,9 s, effet par salve 0.65. Identique pour le joueur et l'IA. Option coupable : OPTION_LEURRES_DEVIATION. Fichier généré.
+Option;Id;Name;DecoyQuantity;DecoyAccuracyMultiplier;DecoyDuration;DecoyCooldown;DecoySupplyCost;SprintDuration;SprintCooldown;LaserMaxRange;SmokeAmmunitionQuantity;ResupplyRadius
+OPTION_LEURRES_DEVIATION;21;ECM Heli 25 Default;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;22;ECM Heli 10 Default;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;23;ECM Heli 05 Default;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;24;ECM Heli 00 Default;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;25;ECM Heli 15 Default;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;26;ECM Heli 20 Default;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;84;ECM Heli 05 +Laser Mi24K;64;0.65;2.9;1;15.6
+OPTION_LEURRES_DEVIATION;86;ECM Heli 25 Model;30;0.65;2.9;1;33.3
+OPTION_LEURRES_DEVIATION;302;ECM Heli 20 Model;30;0.65;2.9;1;33.3
 OPTION_LEURRES_DEVIATION;29;ECM Plane 20 Default;16;0.65;2.9;3;
 OPTION_LEURRES_DEVIATION;30;ECM Plane 10 Default;16;0.65;2.9;3;
 OPTION_LEURRES_DEVIATION;31;ECM Plane 10 Not Default;16;0.65;2.9;3;
@@ -49,3 +49,35 @@ OPTION_LASER_PORTEE_REELLE;45;Laser plane Default;;;;;;;;9000
 OPTION_LASER_PORTEE_REELLE;94;Laser plane NonDefault;;;;;;;;9000
 OPTION_LASER_PORTEE_REELLE;95;ECM Plane 20 + Laser Default;;;;;;;;9000
 OPTION_LASER_PORTEE_REELLE;100;Laser plane NonDefault Model;;;;;;;;9000
+OPTION_FUMIGENES_REELS;1;Smoke x1 NoModel;;;;;;;;;2
+OPTION_FUMIGENES_REELS;3;Smoke x2 NoModel;;;;;;;;;3
+OPTION_FUMIGENES_REELS;5;Smoke x1 NoModel Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;9;Smoke x2 NoModel Default;;;;;;;;;3
+OPTION_FUMIGENES_REELS;11;Sprint Smoke;;;;;;;;;3
+OPTION_FUMIGENES_REELS;17;Abilities T14 Armata;;;;;;;;;3
+OPTION_FUMIGENES_REELS;17;Abilities T15 Barbaris T14 Armata;;;;;;;;;3
+OPTION_FUMIGENES_REELS;27;Laser Smoke x1 Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;28;Sprint Smoke Laser;;;;;;;;;3
+OPTION_FUMIGENES_REELS;64;Smoke x2 APS Default;;;;;;;;;3
+OPTION_FUMIGENES_REELS;81;Sprint30 Smoke x4;;;;;;;;;4
+OPTION_FUMIGENES_REELS;85;Laser Smoke x2;;;;;;;;;3
+OPTION_FUMIGENES_REELS;102;Smoke x1 Model;;;;;;;;;2
+OPTION_FUMIGENES_REELS;103;Sprint30 Smoke;;;;;;;;;3
+OPTION_FUMIGENES_REELS;107;Smoke x1 Supply Light  Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;112;Smoke x2 Supply Heavy Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;113;Smoke x2 Supply Light Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;115;Smoke x1 Supply Medium Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;117;Abilities T15 Barbaris;;;;;;;;;3
+OPTION_FUMIGENES_REELS;208;Smoke x1 Resupply Default;;;;;;;;;2
+OPTION_FUMIGENES_REELS;209;Supply Laser Smoke x1 Default;;;;;;;;;2
+# OPTION_RAVITAILLEMENT_ZONE : rayon de la capacité « ravitailler autour de moi » des camions et des véhicules de combat d'infanterie : 50 -> 100 m. C'est du portage à la main (10 à 30 m en vrai) et des tuyaux de carburant (30 à 100 m), pas un dépôt : 100 m est le haut de la fourchette réelle, 150 serait exagéré. Le véhicule peut toujours le faire en roulant. Le rayon des caisses posées au sol (150 m) est écrit à part, dans la configuration du jeu. Les 10 capacités de ravitaillement du jeu sont toutes ici (toutes à 50 m d'origine). Le cercle affiché fait toujours exactement deux fois le rayon : c'est le jeu qui le dessine, la valeur affichée ne peut pas mentir. Identique pour les deux camps. Fichier généré.
+OPTION_RAVITAILLEMENT_ZONE;107;Smoke x1 Supply Light  Default;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;108;Supply Med;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;109;Supply Light;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;110;Supply Heavy;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;112;Smoke x2 Supply Heavy Default;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;113;Smoke x2 Supply Light Default;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;114;Supply Heavy Default;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;115;Smoke x1 Supply Medium Default;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;116;Supply Med  Default;;;;;;;;;;100
+OPTION_RAVITAILLEMENT_ZONE;117;Abilities T15 Barbaris;;;;;;;;;;100

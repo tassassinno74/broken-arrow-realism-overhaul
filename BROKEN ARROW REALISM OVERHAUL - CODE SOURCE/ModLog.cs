@@ -1,8 +1,10 @@
 // ModLog: every line the mod writes to the MelonLoader console and Latest.log goes through Mod.Log.
 //  - Personal build: every line is written, unchanged.
 //  - PUBLIC build (dotnet build -p:Public=true): every warning and error is written, and so are the startup, installation,
-//    safety, patch, settings, DLC, campaign and deck, on-screen notice, cheat, watchdog and convoy relaunch lines and the
-//    real-stats summary. Any other line is written at most once per module prefix ("[ASSIST]", "[SPAWN]"...) every 5 minutes,
+//    safety, patch, settings, DLC, campaign and deck, on-screen notice, cheat, time-of-day, watchdog and convoy relaunch lines
+//    and the real-stats summary, plus, for each module that changes a value of the game or measures one the author must read back,
+//    the one or two lines a battle it owes the log - never its periodic reports. Any other line is written at most once per module
+//    prefix ("[ASSIST]", "[SPAWN]"...) every 5 minutes,
 //    followed by the number of lines of that prefix left out since the previous one, so a shared log stays short but useful.
 //    Nothing in the mod reads the log back: the filter never changes what the mod does.
 // Build: build flavour and preference descriptions (full texts in the personal build, short neutral texts in the PUBLIC build).
@@ -77,7 +79,43 @@ namespace RealismOverhaul
             "[TRICHE] touche ", "[TRICHE] résistance ON", "[TRICHE] résistance OFF", "[TRICHE] unités par carte ",
             "[TRICHE] remise à zéro", "[TRICHE] argent", "[TRICHE] cartes", "[TRICHE] soin",
             "[MISSION] suivi de la mission", "[MISSION] fin de bataille", "[MISSION] bilan ", "[MISSION] relance ",
+            "[ESQUIVE] bilan",                             // vol bas des hélicos : le bilan de fin de bataille
+            "[DEBARQUEMENT] bilan",                        // durée réelle des débarquements : le chiffre attendu pour trancher sur les transports
+            "[DEBARQUEMENT] réglages",                     // les réglages de débarquement du jeu, une fois par bataille
+            "[DEBARQUEMENT] ATTENTION",                    // un débarquement de plus de 60 s : la seule chose qui pourrait retarder une étape
+            "[VOL-BAS] le vol bas coûte",                  // l'état des trois règles du vol bas, une fois par changement
+            "[VUE-AA] règles de vue propre",               // l'état des deux règles de vue (infanterie, véhicules), une fois par changement
+            "[DISCRETION] capacité",                       // capacité « discrétion » rallumée : ce qui a été marqué au chargement
+            "[DISCRETION] bilan",                          // fin de bataille : ce que la mesure a vu
+            "[HEURE]",                                     // heure de la mission : quelques lignes par bataille (relevé de la carte, heure appliquée, script qui pilote la lumière)
             "[REALISME] appliqué", "[REALISME] annulé",
+            "[ASSIST] artillerie :",          // artillerie : une ligne compacte par passe (pièces prêtes, cibles, salves, refus)
+            "[ASSIST] [feu à volonté]",       // une ligne par salve de feu à volonté (quelle pièce sur quel ennemi)
+            "[ASSIST] [contre-batterie]",     // une ligne par salve de contre-batterie
+            "[ASSIST] feu à volonté :",       // pannes du feu à volonté (répartition coupée, trop de pièces dans la même passe)
+            // v0.24.0 modules. One rule for the whole block: a line kept here is written once per session or once per battle, never
+            // on a timer. The periodic reports of the very same modules ("[PROTECTION] dégâts évités" every 30 s, "[CRITIQUES] relevé"
+            // and "[SUPPRESSION] relevé" every 60 s) are deliberately left out, so they keep going through the 5-minute limit and a
+            // shared log does not grow by a hundred lines a battle. Warnings are never filtered, so refusals and errors are already
+            // safe and are not listed here.
+            "[CARGO]",                          // mort du transport : les neuf valeurs du jeu lues AVANT toute écriture — les chiffres sur lesquels le facteur sera réglé — ce qui a été écrit, et le bilan de la bataille (au plus quatre lignes par bataille)
+            "[PROTECTION ARME]",                // quelle mission a été reconnue et quel palier s'est armé : une ligne par bataille
+            "[PROTECTION BILAN]",               // le rappel de fin de bataille, règle par règle
+            "[PROTECTION] mission ",            // même chose quand ces deux lignes gardent le préfixe simple
+            "[PROTECTION] correctif ",          // les correctifs de dégâts : posés ou non
+            "[PROTECTION] bilan",               // fin de bataille : tirs et coups annulés, unités encore protégées (la ligne périodique « dégâts évités » reste, elle, limitée)
+            "[SUPPRESSION] valeurs du jeu AVANT",   // les trois niveaux de stress tels que le jeu les donne, avant qu'une seule valeur soit écrite
+            "[SUPPRESSION] suppression ",       // ce qui a été écrit sur les niveaux choqué et paniqué, ou pourquoi rien ne l'a été
+            "[SUPPRESSION] bilan",              // fin de bataille : combien de fois le jeu a vraiment appliqué le stress à une unité
+            "[SUPPRESSION] effets du stress rendus",         // les valeurs rendues au jeu : la preuve que couper le mod remet tout en place
+            "[SUPPRESSION] les effets du stress ont été rendus",  // rendus par une remise à zéro générale, puis réécrits
+            "[CRITIQUES] bilan",                // fin de bataille : la mesure des dégâts critiques
+            "[CRITIQUES] verdict",              // ce que cette mesure conclut, en français
+            "[NUIT]",                           // signature de tir de nuit : les refus une fois par session, une ou deux lignes par bataille
+            "[METEO]",                          // météo de la bataille : la vue au sol écrite pour les DEUX camps, ou la raison pour laquelle rien n'a été touché
+            "[REPERAGE-VUE]",                   // relevé du brouillard de guerre : deux passes par bataille, lecture seule, avec son verdict
+            "[BATIMENTS]",                      // relevé des bâtiments de la carte : une seule ligne par bataille dans cette build, et rien n'est écrit dans le jeu
+            "[BILAN]",                          // bilan de fin de mission : un seul appel à Msg, donc tout le bilan passe ou rien
         };
 
         /// Lines always written when they start with the first text and contain the second one.
@@ -100,6 +138,9 @@ namespace RealismOverhaul
             "non installé (",
             "SANS compteur d'impacts",
             "point(s) d'accroche installé(s)",
+            "changement d'étape des leurres automatiques",
+            "écart rogné de",                  // artillerie : l'écart de tir a été réduit pour rester dans la portée de la pièce
+            "point retenu par le jeu",         // artillerie : le point d'impact retenu sortait de la portée, ordre annulé tout de suite
         };
 
         static readonly object _lock = new object();

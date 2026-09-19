@@ -34,6 +34,11 @@
 //  Never Get<T>, RandomComponent, GenerateMissVectorOnTarget, SetNewTargetToMissile or any
 //  target-search hook. The [ATGM] measurement of ground-attack missiles is unchanged. Logs: [LEURRES] and [ATGM].
 //  The impact depth (ShellHitSystem.InternalUpdate) is shared with AntiHeliTouches through HitDepth / HitSerial / GatedFor.
+//  The missile table is shared with LeurresAuto (automatic flare salvos): its prefix on the seeker writes each missile's target through
+//  NoteMissileTarget, and its salvo pass reads the infrared missiles that have a fresh target and no salvo asked yet through
+//  PendingIrThreats / CollectIrThreats / MarkFlareAsked / MarkFlareDeferred. A threat is only handed over once the missile is CLOSE to
+//  its target (engine read, LeurresSalveDistanceMetres, 1000 m by default), with a short time-since-launch rule as the only fallback when
+//  that reading is not available. Nothing of that changes a decision, a chance or the fly-off here.
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -65,7 +70,7 @@ namespace RealismOverhaul
 {
     static class LeurresMesure
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const int MaxErrors = 50;
         const int TableSize = 128, RollRecs = 4;
         const int StageMeasure = 0, StageGate = 1, StageTrial = 2, StageFull = 3;
@@ -102,6 +107,7 @@ namespace RealismOverhaul
 
         // ---------------------------------------------------------------- preferences and session state
         static MelonPreferences_Entry<bool> _enabled;
+        static MelonPreferences_Entry<float> _nearMeters;
         static MelonPreferences_Entry<int> _unclean, _stagePref;
         static MelonPreferences_Entry<string> _guardVersion, _proofPref, _stopPref;
         static MelonPreferences_Entry<bool> _dropPending;                     // a fly-off call ran in the current battle (saved before the first call)
@@ -166,11 +172,39 @@ namespace RealismOverhaul
             public long FirstMs, LastSeenMs, LastDivertMs, DecideMs, DropMs;
             public float LastChance, GatedDamage, UngatedDamage;
             public EcsEntity E;
+            // target of the missile, written by LeurresAuto's read-only prefix (main thread); AskedFlare = a salvo has already been asked
+            // for this missile against this target, so it is never asked twice. TgtE is the same target as an entity, kept for the
+            // distance read (the engine wants the entity, the salvo pass only ever gets the id).
+            public int TgtEid, TgtVer;
+            public EcsEntity TgtE;
+            public long TgtMs;
+            public bool AskedFlare;
+            // DeferredFlare = a salvo was wanted for this threat but the aircraft was still reloading. The threat stays pending and is
+            // looked at again on a later frame; the flag only keeps the report counting threats instead of frames.
+            public bool DeferredFlare;
+            // NearCounted = this threat has already been counted in the report (distance rule or fallback time rule). A threat the salvo
+            // pass leaves pending comes back through Near() on every frame, so without this flag the report would count frames.
+            public bool NearCounted;
+            // TgtFirstMs = when this missile was first seen going for this target, i.e. the launch. Only used by the fallback time rule.
+            public long TgtFirstMs;
         }
         struct RollRec { public long Ms; public int N; public float Effect, Chance, Base, U; public byte Decision; public bool Force; }
         static readonly Missile[] _t = new Missile[TableSize];
         static readonly RollRec[] _rr = new RollRec[TableSize * RollRecs];
         static int _used;
+        /// 1 while at least one infrared missile has a fresh target and no salvo asked for it yet (LeurresAuto's cheap per-frame gate).
+        internal static volatile int PendingIrThreats;
+        const long ThreatFreshMs = 500;                                 // a target read more than half a second ago is not a live threat any more
+        // When the salvo is asked for. Firing at the launch flash burns the flare kilometres away and the missile then visibly flops to the
+        // ground; a real crew waits for the threat to close in. The rule is therefore a DISTANCE: the salvo is asked once the missile is
+        // within LeurresSalveDistanceMetres of its target. A fixed "it has been flying for two seconds" rule cannot do that job - a missile
+        // launched at short range impacts in less than two seconds and would never get a salvo at all - so it is only the fallback for when
+        // the distance cannot be read, and it is short. The engine re-decides the hit when the target's active decoy count changes, so a
+        // salvo fired in flight is just as effective as one fired before the launch.
+        const long FlareWaitFallbackMs = 700;
+        const float NearProbeMeters = 1000000f;                         // "is this reading usable at all" probe: everything is within 1000 km
+        const float NearConeHalfAngle = 180f;                           // full sphere: only the distance of the engine check is wanted
+        const int MaxNearErrors = 20, MaxNearProbeFails = 20;
         static long _lastFlareGoneMs = long.MinValue / 2;
 
         /// Per-battle counters written on the main thread (replaced as a whole at each battle start).
@@ -184,6 +218,7 @@ namespace RealismOverhaul
             public long GateImpacts, GateCalls, GateLeak, GatedAir0, GatedAir1, GatedOther;
             public double GatedDmg;
             public long Drops, DropErr, DropSkippedDead, DroppedFinal, DroppedLeftOk, AirHitAfterDrop;
+            public long NearClose, NearFallback, NearErr;               // threats handed over on the distance rule, on the fallback time rule, failed distance reads
             public long Missiles, LeftNoImpact, ForcedHit, ForcedHitImpact, MissileLines, MissileLinesSuppressed, DivertCallsTracked;
             public double FlightSeconds;
             public long Effect65, Effect90, EffectOther;
@@ -194,6 +229,10 @@ namespace RealismOverhaul
 
         static readonly bool[] _fuse0 = new bool[NIr];
         static bool _rowsChecked, _gridDone, _aircraftLogged, _tripped, _dropsOff, _scanAvail, _scanWarned, _scanOff;
+        // distance rule of the salvo (per battle): proven once the engine check has answered "close" at least once, switched off for the
+        // battle when it throws or when even the 1000 km probe says no (that build cannot answer, the fallback time rule takes over)
+        static bool _nearProven, _nearOff, _nearOffLogged;
+        static int _nearErr, _nearProbeFails;
         static IntPtr _gridSrc;
         static int _lastUnityFrame = -1;
         static long _battleStartMs;
@@ -242,9 +281,153 @@ namespace RealismOverhaul
         internal static float GatedValue => _gatedValue;
         /// Every impact seen since the battle started (combat watchdogs). Any thread.
         internal static long ImpactsThisBattle => Interlocked.Read(ref _hitTotal);
+        /// Infrared missiles the engine really resolved since the battle started: irRolls = hit chances it rolled for one of them on the
+        /// seeker path, IN FLIGHT (not at the impact); irFlareRolls = those rolled while the target had active decoys. Both are counted
+        /// BEFORE the module decides anything, so a missile the flares send wide still counts, and neither can move while the game is
+        /// paused or while nobody is shooting. That is what tells an ordinary lull from a real breakage for LeurresAuto's watchdog: a lull
+        /// rolls nothing at all. Same counters as the report ("tirages infrarouges"). Main thread, no allocation.
+        internal static void BattleRolls(out long irRolls, out long irFlareRolls)
+        {
+            var b = _b;                                                 // read once: the battle start replaces the whole object
+            if (b == null) { irRolls = 0; irFlareRolls = 0; return; }
+            irRolls = b.IrRolls; irFlareRolls = b.IrFlareRolls;
+        }
         /// Current flare stage of the battle in progress, after safety cut-offs: 1 infrared decision + gate (the floor), 2 fly-off trial,
         /// 3 full; 0 only while a safety cut-off holds (classic flares).
         internal static int CurrentStage => EffStage;
+        /// The missile table is being filled in a battle: the flare measurement is on and its hooks answer (LeurresAuto).
+        internal static bool TableRunning => _sessionArmed && _armed;
+
+        /// Target of a guided missile, read by LeurresAuto's read-only prefix on the seeker (main thread, no allocation). False when the
+        /// missile is not in the table (only infrared missiles are). A new target on the same missile is a new threat: it may ask again.
+        internal static bool NoteMissileTarget(int mEid, int mVer, int tEid, int tVer, EcsEntity tgt)
+        {
+            if (!_sessionArmed || !_armed || _used == 0 || tEid == 0) return false;
+            int s = Find(mEid, mVer);
+            if (s < 0) return false;
+            ref Missile m = ref _t[s];
+            long now = Environment.TickCount64;
+            if (m.TgtEid != tEid || m.TgtVer != tVer)
+            {
+                m.TgtEid = tEid; m.TgtVer = tVer; m.AskedFlare = false; m.DeferredFlare = false; m.NearCounted = false;
+                m.TgtFirstMs = now;                                                 // a new target is a new threat: the clock restarts
+            }
+            m.TgtE = tgt;                                                           // same target, fresher copy of the entity
+            if (m.TgtFirstMs == 0) m.TgtFirstMs = now;
+            m.TgtMs = now;
+            if (m.Irx >= 0 && !m.AskedFlare) PendingIrThreats = 1;
+            return true;
+        }
+
+        /// Infrared missiles with a fresh target and no salvo asked yet: target entity id, target version and table slot. Main thread,
+        /// allocation-free, buffers given by the caller. Returns how many were written (at most max).
+        internal static int CollectIrThreats(int[] tgt, int[] ver, int[] slot, int max, long ms)
+        {
+            int n = 0;
+            if (_sessionArmed && _armed && _used > 0 && tgt != null && ver != null && slot != null)
+            {
+                int frame = _frame;
+                float meters = NearMeters();                                           // read once per frame, not once per missile
+                if (max > tgt.Length) max = tgt.Length;
+                if (max > ver.Length) max = ver.Length;
+                if (max > slot.Length) max = slot.Length;
+                for (int i = 0; i < TableSize && n < max; i++)
+                {
+                    ref Missile m = ref _t[i];
+                    if (!m.Used || m.Irx < 0 || m.AskedFlare || m.TgtEid == 0) continue;
+                    if (ms - m.TgtMs > ThreatFreshMs) continue;                        // the seeker has not checked this target lately
+                    if (_scanAvail && m.SeenInScan && frame - m.SeenFrame > 2) continue;   // the projectile list says the missile is gone
+                    // last of all, because it is the only test that costs an engine call: is the missile close enough to be worth a salvo
+                    if (!Near(ref m, ms, meters)) continue;
+                    tgt[n] = m.TgtEid; ver[n] = m.TgtVer; slot[n] = i;
+                    n++;
+                }
+            }
+            if (n == 0) PendingIrThreats = 0;
+            return n;
+        }
+
+        /// Whether this missile is close enough to its target for the salvo to be worth its flares. The engine's own cone check answers it
+        /// (full sphere, so only its distance half counts); a build where that reading throws or never answers falls back on the short
+        /// time-since-launch rule, which is why a missile can never end up with no rule at all. Main thread, no allocation.
+        static bool Near(ref Missile m, long ms, float meters)
+        {
+            if (_nearOff) return Late(ref m, ms);
+            try
+            {
+                if (m.TgtE.EntityId != m.TgtEid || m.TgtE.Version != m.TgtVer) return Late(ref m, ms);   // not this target any more
+                if (!m.E.IsAlive || !m.TgtE.IsAlive) return false;                      // missile or target gone: nothing to answer
+                if (BSH.CheckTargetInCone(m.E, m.TgtE, NearConeHalfAngle, meters)) { _nearProven = true; CountNear(ref m, false); return true; }
+                if (_nearProven) return false;                                          // the reading works in this battle: "not close" is a real answer
+                // never answered "close" yet: make sure this build answers at all before trusting a "no" (everything is within 1000 km)
+                if (BSH.CheckTargetInCone(m.E, m.TgtE, NearConeHalfAngle, NearProbeMeters)) { _nearProven = true; return false; }
+                if (++_nearProbeFails >= MaxNearProbeFails) NearGiveUp("le jeu ne répond pas à la distance missile-cible");
+            }
+            catch (Exception e)
+            {
+                _b.NearErr++;
+                if (++_nearErr >= MaxNearErrors) NearGiveUp("lecture de la distance missile-cible impossible : " + e.GetBaseException().Message);
+            }
+            return Late(ref m, ms);
+        }
+
+        /// Distance the player set, kept inside sane bounds (a value of 0 or a nonsense one is simply the default again).
+        static float NearMeters()
+        {
+            float v = 1000f;
+            try { if (_nearMeters != null) v = _nearMeters.Value; } catch { }
+            if (!(v > 0f)) v = 1000f;
+            if (v > 20000f) v = 20000f;
+            return v;
+        }
+
+        /// Fallback rule: the missile has been flying at this target long enough to have closed in. Short on purpose - a missile launched at
+        /// short range impacts in under two seconds - and only ever used when the distance cannot be read.
+        static bool Late(ref Missile m, long ms)
+        {
+            if (m.TgtFirstMs != 0 && ms - m.TgtFirstMs < FlareWaitFallbackMs) return false;
+            CountNear(ref m, true);
+            return true;
+        }
+
+        /// Counts a threat handed over to the salvo pass ONCE, on the rule that handed it over. A threat the salvo pass leaves pending (the
+        /// aircraft is reloading, or the map's aircraft are not known yet) comes back here frame after frame, and one threat waiting one
+        /// second would otherwise add about sixty to the counter: the report would count frames instead of threats and the number the player
+        /// uses to set LeurresSalveDistanceMetres would mean nothing. Main thread, no allocation.
+        static void CountNear(ref Missile m, bool fallback)
+        {
+            if (m.NearCounted) return;
+            m.NearCounted = true;
+            if (fallback) _b.NearFallback++; else _b.NearClose++;
+        }
+
+        static void NearGiveUp(string why)
+        {
+            _nearOff = true;
+            if (_nearOffLogged) return;
+            _nearOffLogged = true;
+            Log("salves de leurres : la distance entre le missile et sa cible ne peut pas être lue pour cette bataille (" + why +
+                $") ; la salve part {FlareWaitFallbackMs} ms après le tir à la place");
+        }
+
+        /// A salvo has been asked (or deliberately not asked) for this missile: it never asks again until it changes target. Main thread.
+        internal static void MarkFlareAsked(int slot)
+        {
+            if ((uint)slot < TableSize) _t[slot].AskedFlare = true;
+        }
+
+        /// The salvo was wanted but the aircraft was still reloading: the threat stays PENDING (no MarkFlareAsked) and is looked at again on
+        /// a later frame, once the gap has run out. True the first time only, so a report counts threats and not frames. Main thread.
+        internal static bool MarkFlareDeferred(int slot)
+        {
+            if ((uint)slot >= TableSize || _t[slot].DeferredFlare) return false;
+            _t[slot].DeferredFlare = true;
+            return true;
+        }
+
+        /// This threat already had to wait for a reload (LeurresAuto's report). Main thread.
+        internal static bool WasFlareDeferred(int slot) => (uint)slot < TableSize && _t[slot].DeferredFlare;
+
         /// Main thread: an infrared missile rolled against active decoys is in flight, or left less than 3 s ago.
         internal static bool DecoyWindowActive
         {
@@ -277,6 +460,9 @@ namespace RealismOverhaul
         {
             var c = MelonPreferences.CreateCategory("RealismOverhaul_Leurres");
             _enabled = c.CreateEntry("MesureLeurres", true, description: Build.Desc("Leurres réalistes (toujours actif) : un missile infrarouge face à des leurres actifs rate toujours et ne fait aucun dégât ; mesure des missiles guidés"));
+            _nearMeters = c.CreateEntry("LeurresSalveDistanceMetres", 1000f, description: Build.Desc(
+                "Distance (en mètres) à laquelle l'équipage lâche sa salve de leurres : la salve part quand le missile arrive à cette distance de l'appareil visé, pas au départ du coup (un leurre lâché à 5 km ne sert à rien). Trop petit, la salve part trop tard ; trop grand, le stock brûle pour rien.",
+                "Distance (m) à laquelle la salve de leurres est lâchée sur un missile qui approche."));
             _unclean = c.CreateEntry("SessionsInterrompues", 0, description: Build.Desc("Sécurité automatique, ne pas modifier"));
             _guardVersion = c.CreateEntry("VersionSecurite", "", description: Build.Desc("Sécurité automatique, ne pas modifier"));
             _stagePref = c.CreateEntry("LeurresEtape", 0, description: Build.Desc("Sécurité automatique, ne pas modifier"));
@@ -413,6 +599,7 @@ namespace RealismOverhaul
             _rng = new System.Random(unchecked(Environment.TickCount * 31 + 7));
             // a watchdog trip of the previous battle ends here; only the session flags (never saved) carry over
             _tripped = false; _dropsOff = _dropsOffSession; _scanAvail = false; _scanWarned = false; _scanOff = false;
+            _nearProven = false; _nearOff = false; _nearOffLogged = false; _nearErr = 0; _nearProbeFails = 0;
             _rowsChecked = false; _aircraftLogged = false; _contactWarned = false; _lullLogged = false;
             _wIdx = -1; _wCount = 0;
             _wActLast = 0; _wActRun = float.NegativeInfinity;
@@ -1040,6 +1227,7 @@ namespace RealismOverhaul
         {
             for (int i = 0; i < TableSize; i++) _t[i].Used = false;
             _used = 0;
+            PendingIrThreats = 0;
         }
 
         static void Finalize(int i, long ms)
@@ -1721,6 +1909,11 @@ namespace RealismOverhaul
             sb.Append($" ; décrochages {b.Drops} (erreurs {b.DropErr}, missiles déjà morts {b.DropSkippedDead}, partis en 20 s sans toucher un appareil {b.DroppedLeftOk}/{b.DroppedFinal}, appareil touché après décrochage {b.AirHitAfterDrop})");
             sb.Append($" ; missiles finis sans impact {b.LeftNoImpact}/{b.Missiles}, vol moyen {(b.Missiles > 0 ? (b.FlightSeconds / b.Missiles).ToString("0.0", Inv) : "-")} s, appels de guidage par seconde {(b.FlightSeconds > 0.1 ? (b.DivertCallsTracked / b.FlightSeconds).ToString("0", Inv) : "-")}");
             sb.Append($" ; effet des leurres vu 0.65 {b.Effect65}, 0.90 {b.Effect90}, autre {b.EffectOther}");
+            if (b.NearClose + b.NearFallback + b.NearErr > 0)
+                // these are THREATS handed to the salvo pass (one count each), not salvos fired: the salvo pass may still leave one aside
+                // (not an aircraft, aircraft without decoys, reload). The number of salvos really fired is in the [LEURRES] automatic report.
+                sb.Append($" ; menaces passées aux salves à moins de {NearMeters().ToString("0", Inv)} m {b.NearClose}" +
+                          $", à l'ancienne règle de temps {b.NearFallback} (distance illisible{(_nearOff ? ", lecture coupée pour la bataille" : "")}, erreurs {b.NearErr})");
             sb.Append($" ; tirages hors fil principal {Interlocked.Read(ref _rollOffMain)}, dégâts hors fil principal {Interlocked.Read(ref _dmgOffMain)}");
             if (b.MissileLinesSuppressed > 0) sb.Append($" ; lignes de missile non écrites {b.MissileLinesSuppressed}");
             if (final)

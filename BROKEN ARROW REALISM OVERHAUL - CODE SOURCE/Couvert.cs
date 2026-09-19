@@ -8,6 +8,10 @@
 //   everything else 1.0/1.0. Garrisoned squads and squads standing on building pixels are never scaled (buildings are handled by
 //   the config and IgnoreCover data). Close combat (CloseQuartersCombatSystem.DeductHitPoints) is untouched. The AI scoring calls
 //   get the same factor, so the AI sees that a squad in the woods is harder to hurt.
+//  v1.3: the same postfix also applies the entrenchment factor of Retranchement.cs (a squad that has stayed put digs in).
+//   The two are independent and simply multiply, so building, forest and entrenchment stack instead of replacing each other;
+//   the entrenchment level travels in the same snapshot (one more byte per squad) and costs one flat-array read per call.
+//   The hook is installed as soon as EITHER feature is wanted: switching forest cover off must not switch entrenchment off.
 //  Main thread every 0.5 s: EntityId -> location class for every infantry squad (map terrain under the squad centre and 4 points
 //  at 5 m, LoadedComponent for garrisons), published as one immutable snapshot; ammo Id -> cover class once per battle
 //  (DegatsMunitions: weapon types, trajectory, ArmorTargeted, calibre and thermobaric names).
@@ -47,7 +51,7 @@ namespace RealismOverhaul
 {
     static class Couvert
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const int MaxErrors = 50;
         const int QueueSize = 4096;                                  // power of two
         internal const byte LocOpen = 0, LocVegetation = 1, LocForest = 2, LocGarrison = 3, LocOnBuilding = 4, LocLoaded = 5, LocUnknown = 6;
@@ -77,15 +81,16 @@ namespace RealismOverhaul
         static int _bridgeMask = -1;
 
         // ---------------------------------------------------------------- hook side (immutable snapshots, plain counters)
-        static volatile bool _armed, _off;
+        static volatile bool _armed, _off, _coverOn;
         static volatile int _mainThread;
 
         sealed class Snap
         {
-            internal readonly int[] Ids; internal readonly byte[] Loc, Men;
-            internal Snap(int[] ids, byte[] loc, byte[] men) { Ids = ids; Loc = loc; Men = men; }
+            internal readonly int[] Ids; internal readonly byte[] Loc, Men, Ent;
+            internal Snap(int[] ids, byte[] loc, byte[] men, byte[] ent) { Ids = ids; Loc = loc; Men = men; Ent = ent; }
         }
-        static volatile Snap _snap = new Snap(Array.Empty<int>(), Array.Empty<byte>(), Array.Empty<byte>());
+        static Snap Empty() => new Snap(Array.Empty<int>(), Array.Empty<byte>(), Array.Empty<byte>(), Array.Empty<byte>());
+        static volatile Snap _snap = Empty();
         static volatile byte[] _cover = Array.Empty<byte>();
 
         struct Ev { public long Seq; public int Eid, Ammo; public byte Kind, Loc, Cls, Men; public float Raw, Mult, Final, MaxHeal; }
@@ -159,7 +164,7 @@ namespace RealismOverhaul
         static void EndBattle(string why)
         {
             _armed = false;
-            _snap = new Snap(Array.Empty<int>(), Array.Empty<byte>(), Array.Empty<byte>());
+            _snap = Empty();
             if (!_sessionArmed) return;
             _sessionArmed = false;
             if (_unclean.Value != 0) { _unclean.Value = 0; try { MelonPreferences.Save(); } catch { } }
@@ -177,9 +182,16 @@ namespace RealismOverhaul
         static int _wait;
 
         /// Every frame in campaign: drains the hook queue; snapshot, health poll and reports every 0.5 s.
+        /// True when the postfix is installed and usable: Retranchement.cs checks it before claiming it is active.
+        internal static bool HookReady => _damagePatched && !_refused && !_off;
+
         internal static void Frame()
         {
-            if (_enabled == null || !_enabled.Value || _refused) { if (_armed) _armed = false; return; }
+            // the hook serves two features: forest cover (this file) and entrenchment (Retranchement.cs). Switching one off
+            // must never switch the other off, so it is installed as soon as either is wanted.
+            bool wantCover = _enabled != null && _enabled.Value;
+            if ((!wantCover && !Retranchement.Wanted) || _refused) { if (_armed) _armed = false; _coverOn = false; return; }
+            _coverOn = wantCover;
             float now = UnityEngine.Time.realtimeSinceStartup;
             if (_sessionArmed) Drain();
             if (now < _nextTick) return;
@@ -329,13 +341,17 @@ namespace RealismOverhaul
                 Interlocked.Increment(ref _calls);
                 if (Environment.CurrentManagedThreadId != _mainThread) Interlocked.Increment(ref _offMain);
                 byte loc = s.Loc[i];
-                bool cover = loc == LocVegetation || loc == LocForest;
-                if (!cover && !inHit) return;                                                // AI scoring outside the woods: nothing to do
+                byte ent = s.Ent[i];                                                         // entrenchment level (Retranchement.cs), 0 = none
+                bool cover = _coverOn && (loc == LocVegetation || loc == LocForest);
+                if (!cover && ent == 0 && !inHit) return;                                    // AI scoring on a squad with nothing to scale
                 int ammo = ammoInfo == null ? 0 : DegatsAmmoCache.Id(ammoInfo);
                 var tbl = _cover;
                 byte cls = (uint)ammo < (uint)tbl.Length ? tbl[ammo] : DegatsMunitions.CoverNone;
                 if (cls >= DegatsMunitions.CoverCount) cls = DegatsMunitions.CoverNone;
-                float mult = loc == LocForest ? ForestMult[cls] : loc == LocVegetation ? VegetationMult[cls] : 1f;
+                float mult = cover ? (loc == LocForest ? ForestMult[cls] : VegetationMult[cls]) : 1f;
+                // the two factors multiply: building (engine) x vegetation/forest (here) x entrenchment (Retranchement.cs)
+                float em = ent == 0 ? 1f : Retranchement.MultOf(ent, ammo, loc == LocGarrison || loc == LocOnBuilding);
+                if (em < 1f) { mult *= em; Retranchement.NoteReduction(); }
                 if (mult < 1f)
                 {
                     __result = r * mult;
@@ -380,19 +396,26 @@ namespace RealismOverhaul
             var ids = new List<int>();
             var locs = new List<byte>();
             var men = new List<byte>();
+            var ent = new List<byte>();
             var seen = new HashSet<int>();
             Array.Clear(_locCount, 0, NLoc);
             foreach (var u in scan.All)
             {
                 if (!u.Infantry) continue;
-                byte loc;
-                try { loc = Classify(u, map); } catch { loc = LocUnknown; }
+                byte loc; bool riding = false;
+                try { loc = Classify(u, map, out riding); } catch { loc = LocUnknown; riding = false; }
                 int pct = -1;
                 try { pct = u.U.GetHealPercentage(); } catch { pct = -1; }
                 var hp = UnitHp(u.UnitId);
                 int m = hp.members > 0 && pct >= 0 ? (int)Math.Ceiling(pct * hp.members / 100.0 - 0.01) : 0;
                 m = Math.Clamp(m, 0, 255);
-                ids.Add(u.Eid); locs.Add(loc); men.Add((byte)m);
+                // a squad riding in a transport is not in its hole any more: the hole is lost (Retranchement drops it next tick).
+                // The test is the embarked component itself, not the location class: a transport parked ON a building gives its
+                // passengers the garrison class, and they would have gone on digging while riding.
+                byte lvl;
+                if (riding) { Retranchement.NoteLoaded(u.Uid); lvl = Retranchement.LvlNone; }
+                else lvl = Retranchement.LevelOf(u.Uid);
+                ids.Add(u.Eid); locs.Add(loc); men.Add((byte)m); ent.Add(lvl);
                 _locCount[loc]++;
                 seen.Add(u.Eid);
                 if (_unitOfEid.Count < 20000 || _unitOfEid.ContainsKey(u.Eid)) _unitOfEid[u.Eid] = u.UnitId;
@@ -411,15 +434,16 @@ namespace RealismOverhaul
             Array.Sort(ia, order);
             var la = new byte[ia.Length];
             var ma = new byte[ia.Length];
-            for (int i = 0; i < order.Length; i++) { la[i] = locs[order[i]]; ma[i] = men[order[i]]; }
-            _snap = new Snap(ia, la, ma);                                                    // published as a whole, before arming
+            var ea = new byte[ia.Length];
+            for (int i = 0; i < order.Length; i++) { la[i] = locs[order[i]]; ma[i] = men[order[i]]; ea[i] = ent[order[i]]; }
+            _snap = new Snap(ia, la, ma, ea);                                                // published as a whole, before arming
         }
 
         /// Location class of a squad: garrison / building pixel / vegetation / forest / open, from the map under the squad centre and
         /// 4 points at 5 m (a squad on the edge of a wood counts as vegetation, not forest).
-        static byte Classify(DegatsUnit u, MapMeta map)
+        static byte Classify(DegatsUnit u, MapMeta map, out bool loaded)
         {
-            bool loaded = false;
+            loaded = false;
             if (!_loadedBroken)
             {
                 try { loaded = u.U.Entity.Has<LoadedComponent>(); }
@@ -631,8 +655,8 @@ namespace RealismOverhaul
                 Acc ta = Sum(_a, l), tb = Sum(_b, l);
                 if (ta.N + tb.N == 0) continue;
                 var sb = new StringBuilder();
-                sb.Append($"{LocNames[l]} : A {ta.N} paires, final/brut {R(ta.Final, ta.Raw)}, final/(brut x couvert) {R(ta.Final, ta.MultRaw)}, moyenne des rapports {(ta.N > 0 ? "x" + (ta.RatioSum / ta.N).ToString("0.###", Inv) : "-")}");
-                sb.Append($" ; B {tb.N} séjours, final/brut {R(tb.Final, tb.Raw)}, final/(brut x couvert) {R(tb.Final, tb.MultRaw)}");
+                sb.Append($"{LocNames[l]} : A {ta.N} paires, final/brut {R(ta.Final, ta.Raw)}, final/(brut x nos facteurs) {R(ta.Final, ta.MultRaw)}, moyenne des rapports {(ta.N > 0 ? "x" + (ta.RatioSum / ta.N).ToString("0.###", Inv) : "-")}");
+                sb.Append($" ; B {tb.N} séjours, final/brut {R(tb.Final, tb.Raw)}, final/(brut x nos facteurs) {R(tb.Final, tb.MultRaw)}");
                 bool first = true;
                 for (int c = 0; c < NCls; c++)
                 {

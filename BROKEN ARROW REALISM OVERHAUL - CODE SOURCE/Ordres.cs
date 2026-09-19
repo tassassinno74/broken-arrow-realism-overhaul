@@ -1,7 +1,34 @@
 // RealismOverhaul — order-panel options chosen by the player (WARNO-like), for the local player's selected units only.
 //  Stances (on/off per unit):  Riposte seulement (RIP), Défendre la position (DEF), Débarquer au contact (DEBC).
-//  One-click actions:          Aller se ravitailler (RAVX), Occuper le bâtiment proche (GAR), Repli vers zone amie (RZ).
-//  Nothing happens to a unit the player did not switch on or click. Artillery and aircraft never receive these orders.
+//  One-click actions:          Aller se ravitailler (RAVX), Occuper le bâtiment proche (GAR), Repli vers zone amie (RZ),
+//                              Dernier contact (DPC), which only reads and tells.
+//  Nothing happens to a unit the player did not switch on or click. Artillery and aircraft never receive these orders
+//  (DPC gives no order to anything: it is a report).
+//
+// DERNIER CONTACT (DPC) — what it is, and what it is NOT.
+//  What the player asked for was a marker left on the map where an enemy was last seen, fading with time. The mod has no way
+//  to draw anything on the map: everything it shows is a retouch of a game object that already exists (a cloned order button,
+//  a sprite swapped on the supply ring, a number rewritten in the Alt tool). The engine has no "last seen" ghost to borrow
+//  either: WasDetectedOnce is a bare boolean with no position (alldump.txt:38113), the minimap rebuilds its buffer every
+//  frame, and the fire-mission feedback is built by two static methods that take a FireMissionInfo BY REFERENCE
+//  (alldump.txt:42368/42371) — the exact signature shape this mod never touches. So there is NO marker here.
+//  What is here is the half the mod really can do honestly: it remembers WHERE the enemies the player's own side really saw
+//  were standing the last time they were visible, and one click tells him. The position is frozen at that moment and never
+//  moves again, so nothing the player did not legitimately see is ever shown. A unit killed while visible leaves no contact
+//  (the map read used for that can only REMOVE a contact, never create one), and a contact is forgotten after DpcDuree.
+//  WHAT A DPC PASS REALLY COSTS. It is NOT a free read of a warm cache. In a normal battle nothing else forces the 1 s
+//  visibility cache — repli only reads it when a vehicle is hit, ambush and logistics are off by default — so each pass is a
+//  cold Visibility.Evaluate: three whole-map LuaMap.GetUnits, three per-unit sources over own + enemy units, two
+//  CountUnits.Invoke and about fifteen managed allocations, of the order of 200 IL2CPP calls every 2 s. That is why the pass
+//  does not run at all while the two Assistants.cs lines below are missing and the button therefore cannot exist.
+//  It also has one side effect on a file this one does not own: forcing the visibility from t=0 sets TeamState.FirstEnemies
+//  at the start of the battle instead of at the first read, so the FAV notice "pas de visibilité" and the self-test of
+//  Visibilite.Judge() settle about a minute earlier than without DPC. The message stays true; only its timing moves.
+//  WHY A CONTACT IS NOT FROZEN ON THE FIRST MISSED PASS. Visibilite.cs picks one of five sources and can reject it in the
+//  middle of a battle, and the sources disagree by a lot (the player's own log: the same map read 22, 16 or 3 enemies
+//  depending on the source). So the pass forgets everything when the source changes, and a unit must be missing from the
+//  spotted list DpcManquesMin passes in a row before its position is frozen — and the moment kept is the moment it was
+//  really last seen, not the moment the mod concluded it was gone.
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -15,17 +42,30 @@ namespace RealismOverhaul
     static partial class Assistants
     {
         static readonly List<int> _selRIP = new(), _selDEF = new(), _selDEBC = new(), _selRAVX = new(), _selGAR = new(), _selRZ = new();
+        static readonly List<int> _selDPC = new();
         static readonly string[] IconsRIP = { "Order_HoldFireOn", "Order_HoldFire" };
         static readonly string[] IconsDEF = { "Order_Attack", "FM_Targeting_Creep" };
         static readonly string[] IconsDEBC = { "Order_Unload" };
         static readonly string[] IconsRAVX = { "Ability_SupplyRearm", "Ability_Supply" };
         static readonly string[] IconsGAR = { "Ability_Sneak", "Order_Unload" };
         static readonly string[] IconsRZ = { "Order_Reverse", "Order_BackToBase" };
+        // both names are in the sprite inventory the mod logged in battle ("icônes connues", Assistants.Diagnose) and neither is
+        // the first choice of another button, so the two orders never end up wearing the same icon
+        static readonly string[] IconsDPC = { "Ability_LaserDesignation", "FM_Targeting_Line" };
+
+        // No Opt member exists for this order in Assistants.cs and that file is not ours to edit, so the flag is declared here.
+        // A [Flags] enum carries unnamed values perfectly well; 1024 is far above every value that file uses (256 = RZ).
+        const Opt OptDPC = (Opt)1024;
 
         sealed class RipState { public bool Held; public int Hp; public float LastHit = -1000f; }
         sealed class DefState { public V3 Anchor; public float Radius; public float OrderAt = -1000f; public bool Chasing; }
         sealed class DebcState { public int Hp; public bool Armed = true; public float LastContact = -1000f; public int Pax = -1; }
         sealed class ActJob { public float T0; public string What; public V3? PendingDest; }
+
+        /// One enemy the player's side really saw and does not see any more. Pos is the position of the LAST pass where it was
+        /// visible: it is written once and never touched again, so the mod never follows a unit the player cannot see.
+        /// Lost is the moment of that same pass - when it was last SEEN, not when the mod confirmed the loss a few passes later.
+        sealed class Contact { public V3 Pos; public float Lost; public string Name; }
 
         static readonly Dictionary<int, RipState> _rip = new();
         static readonly Dictionary<int, DefState> _def = new();
@@ -33,7 +73,44 @@ namespace RealismOverhaul
         static readonly Dictionary<(int uid, Opt opt), ActJob> _actJobs = new();
         static float _nextOrd;
 
-        static bool IsAction(Opt o) => (o & (Opt.RAVX | Opt.GAR | Opt.RZ)) != 0;
+        // ---- dernier contact (DPC)
+        const float DpcPeriode = 2f;          // one visibility read every 2 s: the answer is cached 1 s, and a contact is at most this stale
+        const float DpcDuree = 120f;          // a contact older than this is forgotten (that is what "fading with time" means here)
+        const int DpcMax = 40;                // hard cap on what is remembered: no list can grow without a bound
+        const int DpcMaxErreurs = 20;         // kill-switch: past this the tracking stops for the battle and the order says nothing
+        const int DpcManquesMin = 3;          // passes in a row a unit must be missing before its position is frozen (about 6 s)
+        static readonly Dictionary<int, (V3 pos, int role, float vu)> _dpcVu = new();  // enemy UID -> where it stood, and when, on the last pass where it WAS visible
+        static readonly Dictionary<int, int> _dpcManques = new();               // enemy UID -> passes in a row it has been missing from the spotted list
+        static readonly Dictionary<int, Contact> _dpcPerdus = new();            // enemy UID -> where and when the contact was lost
+        static readonly List<int> _dpcTmp = new();                              // scratch, reused: the pass allocates nothing
+        static readonly HashSet<int> _dpcVivants = new();
+        static readonly Dictionary<int, string> _dpcNoms = new();
+        static readonly List<string> _dpcLignes = new();
+        static float _nextDpc, _dpcNextLog;
+        static int _dpcErreurs;
+        static string _dpcSource;             // the visibility source the current contact list was built with
+        static bool _dpcArme = true, _dpcVuOk, _dpcTexteDit;
+
+        // Whether the button can exist at all in this build: TitleKey/DescKey live in Assistants.cs, which this file may not
+        // edit, and without their two arms the button is never created. The answer cannot change during a session, so it is
+        // read once and kept: 0 not asked yet, 1 yes, 2 no.
+        static int _dpcBouton;
+
+        /// True when Assistants.cs really answers the DPC texts, i.e. when the button can be created and the tracking is worth
+        /// its cost. While it is false the whole DPC pass is skipped and the order costs the game strictly nothing.
+        static bool DpcBoutonPossible()
+        {
+            if (_dpcBouton == 0)
+            {
+                bool ok;
+                try { ok = TitleKey(OptDPC) == TxtKey.OR_DPC_TITLE && DescKey(OptDPC) == TxtKey.OR_DPC_DESC; }
+                catch { ok = false; }
+                _dpcBouton = ok ? 1 : 2;
+            }
+            return _dpcBouton == 1;
+        }
+
+        static bool IsAction(Opt o) => (o & (Opt.RAVX | Opt.GAR | Opt.RZ | OptDPC)) != 0;
         static bool ActionBusy(Opt o, int uid) => _actJobs.ContainsKey((uid, o));
         static bool IsInfantryRole(int r) => r >= 30 && r <= 36;
         static bool IsHeliRole(int r) => r >= 70 && r <= 73;
@@ -49,17 +126,40 @@ namespace RealismOverhaul
             _btns.Add(Make(src, "RealismOverhaul_RAVX", Opt.RAVX, _selRAVX, IconsRAVX));
             _btns.Add(Make(src, "RealismOverhaul_GAR", Opt.GAR, _selGAR, IconsGAR));
             _btns.Add(Make(src, "RealismOverhaul_RZ", Opt.RZ, _selRZ, IconsRZ));
+            // A button's name and hover description are read through TitleKey(Opt) / DescKey(Opt), and those two switches live in
+            // Assistants.cs, which this file may not edit. Their default branch answers OR_RZ_TITLE / OR_RZ_DESC, so an unknown
+            // option would show the player the name and the explanation of "Repli vers zone amie" — a wrong text on a real button.
+            // Until these two lines are added there, the button is simply not created: nothing wrong is ever shown.
+            // WHERE THEY GO: both switches are switch EXPRESSIONS whose LAST arm is the discard `_ => TxtKey.OR_RZ_*,`. An arm
+            // written after the discard is unreachable and the build fails (CS8510). So each line goes BEFORE that discard,
+            // right after the `Opt.GAR => ...` arm of its own switch:
+            //     in TitleKey (Assistants.cs), just after «Opt.GAR => TxtKey.OR_GAR_TITLE,» :  OptDPC => TxtKey.OR_DPC_TITLE,
+            //     in DescKey  (Assistants.cs), just after «Opt.GAR => TxtKey.OR_GAR_DESC,»  :  OptDPC => TxtKey.OR_DPC_DESC,
+            if (DpcBoutonPossible())
+                _btns.Add(Make(src, "RealismOverhaul_DPC", OptDPC, _selDPC, IconsDPC));
+            else if (!_dpcTexteDit)
+            {
+                _dpcTexteDit = true;
+                Mod.Log.Warning("[ASSIST] ordre « dernier contact » : bouton non créé, son nom et sa description ne sont pas branchés. " +
+                                "Dans Assistants.cs, ajouter « OptDPC => TxtKey.OR_DPC_TITLE, » dans TitleKey et " +
+                                "« OptDPC => TxtKey.OR_DPC_DESC, » dans DescKey, chaque ligne JUSTE APRÈS la ligne « Opt.GAR => ... » " +
+                                "et AVANT la dernière ligne « _ => ... » (une ligne écrite après celle-ci empêche la compilation)");
+            }
         }
 
         static void OrdersClearSel()
         {
             _selRIP.Clear(); _selDEF.Clear(); _selDEBC.Clear(); _selRAVX.Clear(); _selGAR.Clear(); _selRZ.Clear();
+            _selDPC.Clear();
         }
 
         /// Adds one selected local unit to the lists of the options it can use.
         static void OrdersSelect(LuaUnit u)
         {
             int r = u.UnitRole;
+            // "Dernier contact" gives no order: it is a report, so the artillery keeps it too (it is the piece that needs it most).
+            // It is read BEFORE the artillery exit below, which is left exactly as it was for the six other options.
+            if ((r >= 10 && r <= 16) || IsInfantryRole(r) || IsHeliRole(r) || IsArtillery(r)) _selDPC.Add(u.UID);
             if (IsArtillery(r)) return;
             bool s400 = IsS400(u);
             bool direct = ((r >= 10 && r <= 13) || IsInfantryRole(r)) && r != ROLE_AAINF && !s400;
@@ -127,9 +227,11 @@ namespace RealismOverhaul
         /// Every 0.5 s in campaign: runs the stances and follows the one-click actions.
         static void OrdersFrame(GameController gc, int local, int myTeam, float now)
         {
+            int enemyTeam = myTeam == 0 ? 1 : 0;
+            // the lost contacts are followed even when no stance is armed: a contact can only be noticed as it is lost
+            TrackContacts(gc, enemyTeam);
             if (_rip.Count + _def.Count + _debc.Count + _actJobs.Count == 0) return;
             var cmds = gc._GetEcsEventBus_k__BackingField?.Commands;
-            int enemyTeam = myTeam == 0 ? 1 : 0;
             List<(V3 pos, int role)> spotted = null;
 
             // ---- Riposte seulement
@@ -301,6 +403,8 @@ namespace RealismOverhaul
             foreach (var uid in (fresh ? s.Snap : s.Sel).ToList())
                 try { if (_mineByUid.TryGetValue(uid, out var u) && u != null && u.IsAlive() && u.GetOwnerPlayerUID() == local) units.Add(u); } catch { }
             if (units.Count == 0) return;
+            // the report has its own sentence (contacts, not units) and gives no order at all: it leaves before the common path
+            if (s.Opt == OptDPC) { ReportLastContacts(gc, s, units); return; }
             TxtMsg fail;
             int done = s.Opt == Opt.RAVX ? GoResupply(myTeam, units, now, out fail)
                      : s.Opt == Opt.GAR ? GoGarrison(units, now, out fail)
@@ -464,10 +568,194 @@ namespace RealismOverhaul
             return n;
         }
 
+        // ------------------------------------------------------------ DPC : dernier contact (lecture seule, aucun ordre donné)
+
+        /// Follows the enemies the player's own side really sees and freezes the position of the ones that leave that list.
+        /// Read only: nothing of the game is written and no order is given. One pass every DpcPeriode seconds, on the main
+        /// thread, inside the guarded pass of the stances; its own error counter switches it off for the battle rather than
+        /// ever spoiling that pass, and the rest of the orders keep working.
+        static void TrackContacts(GameController gc, int enemyTeam)
+        {
+            // Nothing at all while the button cannot exist: a visibility pass every 2 s for a feature no player can reach would be
+            // a cost paid for nothing, and a log line claiming a result nobody can see.
+            if (!DpcBoutonPossible()) return;
+            // GAME time (frozen while the game is paused), like the artillery jobs: a long pause must not age a contact,
+            // and no pass is needed while nothing on the map can move.
+            float now = GameNow;
+            if (!_dpcArme || now < _nextDpc) return;
+            _nextDpc = now + DpcPeriode;
+            if (Campaign.MissionInerte) return;
+            try
+            {
+                var vis = SpottedInfo(gc, enemyTeam);                            // cached 1 s by Visibilite.cs, shared with FAV, repli and embuscade
+                // the flag follows the LATEST pass: a source validated early and rejected later must turn the report back to
+                // "la vue du champ de bataille n'est pas lisible", not leave it saying "aucun contact perdu de vue"
+                _dpcVuOk = vis != null && vis.Usable;
+                if (!_dpcVuOk) return;                                           // "not readable" is never "lost from sight"
+                // Visibilite.cs can change source in the middle of a battle, and two sources do not see the same enemies. Every
+                // UID that the old source saw and the new one does not would be frozen as a lost contact in one pass, while the
+                // player is looking straight at those units. So a change of source throws the whole list away and starts over.
+                if (!string.Equals(vis.Source, _dpcSource, StringComparison.Ordinal))
+                {
+                    if (_dpcSource != null)
+                        Log($"dernier contact : la source de visibilité est passée de « {_dpcSource} » à « {vis.Source} », " +
+                            $"les {_dpcPerdus.Count} contact(s) en mémoire sont oubliés (deux sources ne voient pas les mêmes ennemis)");
+                    _dpcSource = vis.Source;
+                    _dpcVu.Clear(); _dpcPerdus.Clear(); _dpcManques.Clear();
+                    return;
+                }
+                // 1. who was visible on the last pass and is not any more. One missed pass is not a loss: the spotted set
+                // flickers between two passes, so a unit has to be missing DpcManquesMin times in a row.
+                _dpcTmp.Clear();
+                foreach (var kv in _dpcVu)
+                {
+                    if (vis.Uids.Contains(kv.Key)) continue;
+                    int m = _dpcManques.TryGetValue(kv.Key, out int n) ? n + 1 : 1;
+                    if (m >= DpcManquesMin) { _dpcTmp.Add(kv.Key); _dpcManques.Remove(kv.Key); }
+                    else _dpcManques[kv.Key] = m;
+                }
+                if (_dpcTmp.Count > 0) NoteLostContacts(enemyTeam, now);
+                // 2. the ones still visible: position and moment refreshed, their miss counter cleared, and a contact kept on
+                // them has no reason to exist any more
+                for (int i = 0; i < vis.Units.Count; i++)
+                {
+                    var v = vis.Units[i];
+                    _dpcVu[v.uid] = (v.pos, v.role, now);
+                    if (_dpcManques.Count > 0) _dpcManques.Remove(v.uid);
+                    if (_dpcPerdus.Count > 0) _dpcPerdus.Remove(v.uid);
+                }
+                // 3. the contacts fade: past DpcDuree they are forgotten
+                if (_dpcPerdus.Count == 0) return;
+                _dpcTmp.Clear();
+                foreach (var kv in _dpcPerdus) if (now - kv.Value.Lost > DpcDuree) _dpcTmp.Add(kv.Key);
+                for (int i = 0; i < _dpcTmp.Count; i++) _dpcPerdus.Remove(_dpcTmp[i]);
+            }
+            catch (Exception e)
+            {
+                if (++_dpcErreurs >= DpcMaxErreurs)
+                {
+                    _dpcArme = false;
+                    _dpcVu.Clear(); _dpcPerdus.Clear(); _dpcManques.Clear();
+                    Mod.Log.Warning($"[ASSIST] dernier contact : {_dpcErreurs} erreurs, suivi arrêté pour cette bataille " +
+                                    $"(les autres ordres fonctionnent) : {e.Message}");
+                }
+                else Warn("dpc", "dernier contact : " + e.Message);
+            }
+        }
+
+        /// The UIDs left in _dpcTmp have just left the spotted list. One read of the enemy units says which of them are still
+        /// alive: a unit destroyed under the player's eyes must leave NO contact, or the report would say "it went somewhere"
+        /// about something he killed himself. That read can only REMOVE a contact, never create one, so it never shows the
+        /// player more than he legitimately saw. When it cannot be done, no contact at all is kept from this pass.
+        static void NoteLostContacts(int enemyTeam, float now)
+        {
+            _dpcVivants.Clear(); _dpcNoms.Clear();
+            try
+            {
+                _map ??= new LuaMap();
+                var arr = _map.GetUnits(V3.zero, 1_000_000f, enemyTeam, -1);
+                for (int i = 0; i < (arr?.Length ?? 0); i++)
+                {
+                    var e = arr[i];
+                    try
+                    {
+                        if (e == null || !e.IsAlive()) continue;
+                        int uid = e.UID;
+                        _dpcVivants.Add(uid);
+                        if (_dpcTmp.Contains(uid)) _dpcNoms[uid] = e.Name;        // the name of a unit the player had in sight: he read it himself
+                    }
+                    catch { }
+                }
+            }
+            catch (Exception ex)
+            {
+                Warn("dpc-liste", "dernier contact : unités ennemies illisibles, aucun contact retenu cette passe : " + ex.Message);
+                for (int i = 0; i < _dpcTmp.Count; i++) _dpcVu.Remove(_dpcTmp[i]);
+                return;
+            }
+            int perdus = 0, morts = 0;
+            for (int i = 0; i < _dpcTmp.Count; i++)
+            {
+                int uid = _dpcTmp[i];
+                if (!_dpcVu.TryGetValue(uid, out var v)) continue;
+                _dpcVu.Remove(uid);
+                if (!_dpcVivants.Contains(uid)) { morts++; continue; }
+                if (v.role < 0) continue;                                    // aircraft and helicopters (role -1 in Visibilite.cs): they
+                                                                             // leave the sight every few seconds by flying, and a point on
+                                                                             // the ground would say nothing about where they went
+                if (_dpcPerdus.Count >= DpcMax) continue;
+                _dpcNoms.TryGetValue(uid, out string nom);
+                // the moment kept is the one where the unit was really last SEEN, not the one where the mod concluded it was
+                // gone: the confirmation takes DpcManquesMin passes, and "vu il y a 0 s" would be false by that much
+                _dpcPerdus[uid] = new Contact { Pos = v.pos, Lost = v.vu, Name = nom };
+                perdus++;
+            }
+            if (perdus > 0 && now >= _dpcNextLog)
+            {
+                _dpcNextLog = now + 15f;
+                Log($"dernier contact : {perdus} ennemi(s) perdu(s) de vue{(morts > 0 ? $", {morts} détruit(s) (aucun contact gardé)" : "")}" +
+                    $" ; {_dpcPerdus.Count} contact(s) en mémoire");
+            }
+        }
+
+        // A contact is NOT dropped when its unit dies out of sight. The player never saw that death: dropping it would make the
+        // count fall between two clicks and tell him that an enemy he cannot see is dead — information he never observed, and
+        // the one thing a last-known-position report must not do. A real marker stays until the intel ages out, and that is
+        // what DpcDuree is for. A unit destroyed WHILE visible is a different case and leaves no contact at all: that check is
+        // in NoteLostContacts, and it is legitimate because the player watched it die.
+
+        /// Click on "Dernier contact": how many enemies the player's side has lost from sight, and where the nearest of them
+        /// stood the last time it was really seen. Nothing is ordered, nothing is drawn, nothing is followed.
+        static void ReportLastContacts(GameController gc, Btn s, List<LuaUnit> units)
+        {
+            float now = GameNow;                                             // same clock as the contacts themselves (see TrackContacts)
+            TxtKey title = TitleKey(OptDPC);
+            TxtMsg msg;
+            bool blind = !_dpcArme || !_dpcVuOk;
+            if (blind) msg = new TxtMsg(TxtKey.N_OR_ACTION_NONE, title, TxtKey.OR_FAIL_NO_VIS);
+            else
+            {
+                if (_dpcPerdus.Count == 0) msg = new TxtMsg(TxtKey.N_OR_ACTION_NONE, title, TxtKey.OR_FAIL_NO_LOST);
+                else
+                {
+                    // the distance given is the one to the NEAREST selected unit: what the player would have to cover to go and look
+                    float best = float.MaxValue, age = 0f;
+                    _dpcLignes.Clear();
+                    foreach (var kv in _dpcPerdus)
+                    {
+                        var c = kv.Value;
+                        float d = float.MaxValue;
+                        for (int i = 0; i < units.Count; i++)
+                            try { float x = Flat(units[i].GetPosition(), c.Pos); if (x < d) d = x; } catch { }
+                        if (d >= float.MaxValue) continue;                   // no readable position on the selection: nothing to say about it
+                        if (d < best) { best = d; age = now - c.Lost; }
+                        if (_dpcLignes.Count < 12) _dpcLignes.Add($"{c.Name ?? "unité inconnue"} à {d:0} m, vu il y a {now - c.Lost:0} s");
+                    }
+                    if (best >= float.MaxValue) msg = new TxtMsg(TxtKey.N_OR_ACTION_NONE, title, TxtKey.OR_FAIL_REFUSED);
+                    else
+                    {
+                        var inv = System.Globalization.CultureInfo.InvariantCulture;
+                        msg = new TxtMsg(TxtKey.N_OR_LOST_REPORT, title, _dpcPerdus.Count, best.ToString("0", inv), age.ToString("0", inv));
+                        Log($"dernier contact : {_dpcPerdus.Count} contact(s), distance à la sélection ({units.Count} unité(s)) : {string.Join(" ; ", _dpcLignes)}");
+                    }
+                }
+            }
+            string fr = msg.Fr;
+            var lang = Txt.Current;
+            Mod.NotifyPair(fr, lang == Lang.FR ? fr : msg.In(lang));
+            if (blind || _dpcPerdus.Count == 0) Log("dernier contact : " + fr);
+            UpdateUi(gc);
+            if (_hovered == s) ShowHint(s);
+        }
+
         static void OrdersReset()
         {
             OrdersClearSel();
             _rip.Clear(); _def.Clear(); _debc.Clear(); _actJobs.Clear();
+            _dpcVu.Clear(); _dpcPerdus.Clear(); _dpcTmp.Clear(); _dpcVivants.Clear(); _dpcNoms.Clear(); _dpcLignes.Clear();
+            _dpcManques.Clear();
+            _nextDpc = 0f; _dpcNextLog = 0f; _dpcErreurs = 0; _dpcArme = true; _dpcVuOk = false; _dpcSource = null;
+            // _dpcBouton is NOT reset: whether Assistants.cs answers the DPC texts is a property of the build, not of the battle
             _nextOrd = 0f;
         }
     }

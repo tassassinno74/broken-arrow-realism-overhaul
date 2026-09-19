@@ -1,93 +1,93 @@
 # Broken Arrow Realism Overhaul - vraies stats (données v1). Fichier généré par le mod à chaque version : pour changer une valeur, utiliser les fichiers *_override.csv du dossier parent.
 Option;Id;Name;MaxSpeedRoad;MaxCrossCountrySpeed;MaxSpeedReverse;MaxSpeedWater
-;113;Tracks T72BA;60;45;4
-;112;Tracks T72 60kmh;;;4
-;50;Tracks Sprut;;50;
-;230;Tracks Sprut Armored;;50;
-;55;Tracks T72B3 obr16;65;45;4
-;114;Tracks T72B3 Stock;65;;4
-;56;Tracks T80BVM;;48;
-;106;Tracks T80BV;;48;11
+;113;Tracks T72BA;60;33;4
+;112;Tracks T72 60kmh;;33;4
+;50;Tracks Sprut;;40;
+;230;Tracks Sprut Armored;;40;
+;55;Tracks T72B3 obr16;65;34;4
+;114;Tracks T72B3 Stock;65;34;4
+;56;Tracks T80BVM;;38;
+;106;Tracks T80BV;;37;11
 ;98;Tracks PT76 Base;44;25;
-;99;Tracks PT76 Fast;;42;
-;103;Tracks T90A Base;;;4
-;104;Tracks T90A Fast;65;45;4
-;105;Tracks T90M;;50;4
-;107;Tracks T80U;70;48;11
-;301;Tracks T62 Base;;40;
-;307;Tracks Uran9;35;25;
-;1;Tracks M1A2 Abrams 70kph;67;48;
-;9;Tracks M60A1;48;19;16
-;23;Tracks M1A1 Abrams  65kph;67;48;
-;76;Tracks M551A1 Sheridan;69;;14
-;75;Tracks M8 AGS;72;48;
-;179;Tracks M8 AGS NonAir;72;48;
-;13;Tracks M1A2 Abrams 65kph;;48;
-;228;Tracks M10Booker;64;;
-;267;Tracks Leo2A8 65kph;68;;31
-;4;Tracks BMP3;;45;
-;10;Tracks Bradley M2A2;61;40;
-;35;Tracks BMD4M;;45;
-;187;Tracks BMD4M NonAD;;45;
-;74;Wheels ACV;105;;
-;88;Tracks BMP2;;45;
-;184;Tracks BMP1;;45;
-;185;Tracks BMP1 Armored;;45;
-;250;Tracks CV9035;72;;43
-;252;Wheels Vilkas Boxer Base;103;;
-;15;Wheels Naparnik;105;;
-;206;Tracks AMPV;61;;
-;20;Wheels HMMWV;113;;
-;110;Wheels HMMWV Slow;89;;
-;403;Wheels Flyer;153;;
-;24;Tracks AAVP7A1;72;32;
-;42;Wheels TyphoonK;105;;
+;99;Tracks PT76 Fast;;30;
+;103;Tracks T90A Base;;34;4
+;104;Tracks T90A Fast;65;34;4
+;105;Tracks T90M;;35;4
+;107;Tracks T80U;70;38;11
+;301;Tracks T62 Base;;28;
+;307;Tracks Uran9;35;22;
+;1;Tracks M1A2 Abrams 70kph;67;34;
+;9;Tracks M60A1;48;26;16
+;23;Tracks M1A1 Abrams  65kph;67;34;
+;76;Tracks M551A1 Sheridan;69;38;14
+;75;Tracks M8 AGS;72;40;
+;179;Tracks M8 AGS NonAir;72;40;
+;13;Tracks M1A2 Abrams 65kph;;34;
+;228;Tracks M10Booker;64;36;
+;267;Tracks Leo2A8 65kph;68;34;31
+;4;Tracks BMP3;;38;
+;10;Tracks Bradley M2A2;61;34;
+;35;Tracks BMD4M;;37;
+;187;Tracks BMD4M NonAD;;37;
+;74;Wheels ACV;105;36;
+;88;Tracks BMP2;;36;
+;184;Tracks BMP1;;34;
+;185;Tracks BMP1 Armored;;34;
+;250;Tracks CV9035;72;38;43
+;252;Wheels Vilkas Boxer Base;103;34;
+;15;Wheels Naparnik;105;40;
+;206;Tracks AMPV;61;32;
+;20;Wheels HMMWV;113;46;
+;110;Wheels HMMWV Slow;89;40;
+;403;Wheels Flyer;153;52;
+;24;Tracks AAVP7A1;72;30;
+;42;Wheels TyphoonK;105;36;
 ;36;Tracks BMD2 BTRD;61;35;
-;78;Tracks M113A3;66;;
-;5;Wheels Tigr Fast;;80;
+;78;Tracks M113A3;66;34;
+;5;Wheels Tigr Fast;;52;
 ;218;Tracks MTLB ;61.5;30;
 ;219;Tracks MTLB Armored;61.5;30;
-;213;Wheels LMTV Warpig;94;;
-;215;Wheels XA180;105;;
-;257;Wheels XA180 Armored;105;;
-;306;Wheels Shchuka;85;;
-;52;Wheels Sarmat2;120;;
+;213;Wheels LMTV Warpig;94;32;
+;215;Wheels XA180;105;38;
+;257;Wheels XA180 Armored;105;38;
+;306;Wheels Shchuka;85;34;
+;52;Wheels Sarmat2;120;48;
 ;84;Tracks MTLB Supply;61.5;30;
 ;85;Tracks MTLB Supply Armored;61.5;30;
-;199;Tracks DT30 Supply;45;;
-;223;Wheels URAL4320 Supply;82;;
-;242;Wheels URAL4320 Armored Supply;82;;
+;199;Tracks DT30 Supply;45;28;
+;223;Wheels URAL4320 Supply;82;28;
+;242;Wheels URAL4320 Armored Supply;82;28;
 ;226;Tracks MTLBU;61.5;30;
-;243;Tracks MTSM;;45;
-;19;Wheels Guardian M1117;101;;
-;27;Wheels LMTV;94;;
-;237;Wheels LMTV armored;94;;
-;109;Tracks M548A3 ;61;;
-;212;Wheels MTV ;94;;
-;266;Tracks CRVT Spartan;96;;
-;188;Tracks MstaS;;25;
-;63;Tracks M109A7 ;61;;
-;86;Tracks Gvozdika ;62;30;
-;93;Wheels MZKT Astrolog;;40;
-;100;Tracks Koalitsiya;63;;
-;101;Tracks Akatsiya;63;;14
-;236;Tracks M109A6;56;;
-;186;Wheels TochkaU;60;15;
-;261;Tracks K9EST;67;;
-;262;Tracks PZH2000;67;45;
-;310;Wheels 2S43 Malva;80;;
-;38;Wheels Grad BM21;75;35;
-;39;Wheels Smerch 9K58;;35;
-;44;Tracks Tulpan 2S4;63;;
-;79;Tracks M270;64;;
-;200;Tracks DT30 ;45;;
-;12;Wheels Stryker Base;97;;
-;189;Wheels Stryker Armored;97;;
-;40;Wheels OsaAKM;80;;
-;91;Tracks Shilka ;;30;
-;64;Wheels Patriot;80;;
-;95;Wheels S350;80;;
-;265;Wheels IRIST;90;;
+;243;Tracks MTSM;;30;
+;19;Wheels Guardian M1117;101;38;
+;27;Wheels LMTV;94;32;
+;237;Wheels LMTV armored;94;32;
+;109;Tracks M548A3 ;61;32;
+;212;Wheels MTV ;94;32;
+;266;Tracks CRVT Spartan;96;42;
+;188;Tracks MstaS;;26;
+;63;Tracks M109A7 ;61;30;
+;86;Tracks Gvozdika ;62;28;
+;93;Wheels MZKT Astrolog;;24;
+;100;Tracks Koalitsiya;63;28;
+;101;Tracks Akatsiya;63;29;14
+;236;Tracks M109A6;56;28;
+;186;Wheels TochkaU;60;26;
+;261;Tracks K9EST;67;31;
+;262;Tracks PZH2000;67;31;
+;310;Wheels 2S43 Malva;80;26;
+;38;Wheels Grad BM21;75;30;
+;39;Wheels Smerch 9K58;;24;
+;44;Tracks Tulpan 2S4;63;26;
+;79;Tracks M270;64;31;
+;200;Tracks DT30 ;45;28;
+;12;Wheels Stryker Base;97;38;
+;189;Wheels Stryker Armored;97;38;
+;40;Wheels OsaAKM;80;30;
+;91;Tracks Shilka ;;28;
+;64;Wheels Patriot;80;25;
+;95;Wheels S350;80;25;
+;265;Wheels IRIST;90;26;
 ;7;Heli AH-64D;293;;
 ;48;Heli KA50 52;315;260;90
 ;34;Heli AH1Z;;296;

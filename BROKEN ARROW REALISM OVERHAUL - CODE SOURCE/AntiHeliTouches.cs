@@ -24,6 +24,11 @@
 //     helicopter, with no ground ambiguity; the source row of a unit carrying such a copy counts as fire toward the ground. Dual-target
 //     rows keep the old rule (a round counts toward a helicopter only when no enemy ground unit is within the row's ground range) and
 //     report their doubtful rounds per band.
+//  v1.3, lethality of anti-air rounds, MEASUREMENT ONLY (player request of 2026-09-18: "deux roquettes et l'hélico est dehors ; il n'y a
+//  pas d'hélicoptère blindé"): every impact of a row AntiHeliPortee's live check calls anti-air is tallied per (ammunition, target unit
+//  type) with the damage it really did and the target's full health from the database, so the battle report says in plain words how many
+//  hits it takes to bring that helicopter down. The rule itself is DATA (reel\Munitions.csv, OPTION_MISSILE_ANTIAERIEN_LETAL): no code
+//  decides the damage, this only reads back what the game did with the new figures.
 //  Hooks only queue plain values read from immutable snapshots rebuilt on the main thread; everything else runs on the main thread.
 //  Both sides alike, solo campaign only, lazy Harmony patches with their own id, crash guard, error kill-switch.
 //  Logs: [REPERE-TIREUR] and [PRECISION].
@@ -62,7 +67,7 @@ namespace RealismOverhaul
 {
     static class AntiHeliTouches
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const int MaxErrors = 50;
         const float SuspectRange = 9000f;                           // fallback suspect: nearest enemy ground unit within this distance
         const float FogStart = 180f, FogLength = 20f;               // fog-of-war sampling window (seconds after the battle start)
@@ -79,6 +84,8 @@ namespace RealismOverhaul
         static MelonPreferences_Entry<string> _guardVersion, _precCall, _precRefused;
         static HarmonyLib.Harmony _harmony, _fowHarmony;
         static bool _patchTried, _refused, _everOnline, _sessionArmed, _depthWarned, _fowBroken, _helisLogged;
+        static bool _fowPatched;                                    // the two fog postfixes are installed for the whole session: they are NEVER removed
+        static int _fowCount;                                       // how many of the two went in
         static float _nextSnap, _nextReport, _battleStart, _fowUntil, _nextContact;
         static int _fowState;                                       // 0 waiting, 1 sampling, 2 done for this battle
         const bool FogSamplingEnabled = false;                      // see Frame: kept for a later version that installs the hooks once
@@ -91,6 +98,7 @@ namespace RealismOverhaul
         static volatile int _mainThread;
         static volatile Dictionary<int, int> _heliSide = new();    // helicopter EntityId -> side, replaced as a whole
         static volatile Dictionary<int, int> _airSide = new();     // helicopter and plane EntityId -> side, replaced as a whole
+        static volatile Dictionary<int, UnitInfo> _airUnits = new();   // aircraft EntityId -> unit of the last snapshot (LeurresAuto)
 
         /// Minimum horizontal distance in metres between a unit of side 0 and a unit of side 1 (planes excluded), refreshed every 5 s;
         /// -1 when not measured (module off or no battle), 1e9 when a side has no unit. Any thread.
@@ -139,6 +147,11 @@ namespace RealismOverhaul
         static readonly Dictionary<int, (int hp, int side)> _heliHp = new();             // heli uid -> last health %
         static readonly Dictionary<int, (int hp, int side)> _planeHp = new();            // plane uid -> last health %
         static readonly Dictionary<int, int> _hitsSincePoll = new(), _hitsTotal = new(), _ammoHits = new();
+        /// Lethality of anti-air missiles (player request of 2026-09-18: "deux roquettes et l'hélico est dehors"). Per (ammunition, victim
+        /// unit type): hits, total damage and the victim's full health, so the log can say in plain words how many hits it really takes.
+        sealed class Letal { public int Hits; public double Dmg; public float Health; public string Ammo, Unit; }
+        static readonly Dictionary<long, Letal> _letal = new();
+        static readonly Dictionary<int, float> _healthByUnitId = new();   // unit type -> MaxHealthPoints of its default armour (0 = unreadable)
         static readonly Dictionary<int, int> _planeHitsSincePoll = new(), _gatedSincePoll = new();
         static readonly List<VisCheck> _checks = new();
         static readonly HashSet<int> _checkedShooters = new();
@@ -203,6 +216,20 @@ namespace RealismOverhaul
             return a != null && a.TryGetValue(entityId, out int s) ? s : -1;
         }
 
+        /// Aircraft of the last snapshot (at most 0.5 s old) behind an EntityId: its unit, its mission UID, its side, helicopter or plane,
+        /// and its database unit id. False when that EntityId is not an aircraft. Main thread, no allocation (LeurresAuto).
+        internal static bool TryAircraft(int entityId, out LuaUnit u, out int uid, out int side, out bool heli, out int unitId)
+        {
+            u = null; uid = 0; side = -1; heli = false; unitId = 0;
+            var a = _airUnits;
+            if (a == null || !a.TryGetValue(entityId, out var i) || i == null) return false;
+            u = i.U; uid = i.Uid; side = i.Side; heli = (i.Type & 8) != 0; unitId = i.UnitId;
+            return u != null;
+        }
+
+        /// How many aircraft the last snapshot holds (0 = not built yet, or this measurement is off). Any thread, no allocation (LeurresAuto).
+        internal static int AircraftCount { get { var a = _airUnits; return a == null ? 0 : a.Count; } }
+
         /// Flare proof counts since the previous call; pending hook events are drained first. Main thread.
         internal static AirProof TakeProof()
         {
@@ -219,6 +246,7 @@ namespace RealismOverhaul
             CloseFog(why);
             _heliSide = new Dictionary<int, int>();
             _airSide = new Dictionary<int, int>();
+            _airUnits = new Dictionary<int, UnitInfo>();
             ContactMeters = -1f;
             if (!_sessionArmed) return;
             _sessionArmed = false;
@@ -240,10 +268,13 @@ namespace RealismOverhaul
             float now = UnityEngine.Time.realtimeSinceStartup;
             if (now >= _nextSnap)
             {
-                // one heavy module job per frame (Planif.cs): the 0.5 s snapshot keeps its period, it just avoids the frames of the others
-                if (!Planif.Take(ref _wait, _sessionArmed ? Planif.WaitNormal : Planif.WaitArm)) return;
-                _nextSnap = now + 0.5f;
-                if (!SlowTick(now)) return;
+                // one heavy module job per frame (Planif.cs): the 0.5 s snapshot keeps its period, it just avoids the frames of the
+                // others. A refused slot only delays the snapshot: the hook queue and the visibility checks still run in this frame.
+                if (Planif.Take(ref _wait, _sessionArmed ? Planif.WaitNormal : Planif.WaitArm))
+                {
+                    _nextSnap = now + 0.5f;
+                    if (!SlowTick(now)) return;
+                }
             }
             if (!_sessionArmed) return;
             Drain(now);
@@ -494,6 +525,7 @@ namespace RealismOverhaul
             var players = new Dictionary<int, int>();
             var heliSide = new Dictionary<int, int>();
             var airSide = new Dictionary<int, int>();
+            var airUnits = new Dictionary<int, UnitInfo>();
             var ground = new[] { new List<UnitInfo>(), new List<UnitInfo>() };
             var seenHelis = new HashSet<int>();
             var seenPlanes = new HashSet<int>();
@@ -522,6 +554,7 @@ namespace RealismOverhaul
                         {
                             heliSide[info.Eid] = side;
                             airSide[info.Eid] = side;
+                            airUnits[info.Eid] = info;
                             seenHelis.Add(uid);
                             if (!_names.ContainsKey(uid)) { try { _names[uid] = u.Name ?? "?"; } catch { } }   // still named once gone
                             PollHealth(info);
@@ -529,6 +562,7 @@ namespace RealismOverhaul
                         else if ((m.type & 16) != 0)
                         {
                             airSide[info.Eid] = side;
+                            airUnits[info.Eid] = info;
                             seenPlanes.Add(uid);
                             if (!_names.ContainsKey(uid)) { try { _names[uid] = u.Name ?? "?"; } catch { } }
                             PollPlane(info);
@@ -545,6 +579,7 @@ namespace RealismOverhaul
             _units = units; _uidByEid = byEid; _playerSide = players; _ground = ground;
             _heliSide = heliSide;
             _airSide = airSide;
+            _airUnits = airUnits;
             if (!_helisLogged && airSide.Count > 0)
             {
                 _helisLogged = true;
@@ -789,6 +824,7 @@ namespace RealismOverhaul
             _hitsSincePoll[vUid] = (_hitsSincePoll.TryGetValue(vUid, out var hs) ? hs : 0) + 1;
             _hitsTotal[vUid] = (_hitsTotal.TryGetValue(vUid, out var ht) ? ht : 0) + 1;
             if (_ammoHits.Count < 500 || _ammoHits.ContainsKey(c.Ammo)) _ammoHits[c.Ammo] = (_ammoHits.TryGetValue(c.Ammo, out var ah) ? ah : 0) + 1;
+            NoteLetal(c.Ammo, c.Dmg, victim);
             try { PrecisionHeli.NoteHit(c.Ammo, c.VictimEid); } catch { }   // helicopter-only copy rows: hit counted by class, band and aspect
 
             // source 1: damage statistics id
@@ -838,12 +874,54 @@ namespace RealismOverhaul
                 StartCheck(shooter, source, victim, c.Ammo, dist, now);
                 if (IsGround(shooter.Type) && HasAmmo(shooter.UnitId, c.Ammo)) PrecisionHit(shooter, c.Ammo, dist, now);
             }
+            // vol bas sous le feu : l'hélico touché et, quand il est connu, le tireur retenu
+            try { Esquive.NoteHit(vUid, vSide, c.Ammo, shooter != null ? shooter.Uid : -1, shooter != null ? shooter.Side : -1); } catch { }
 
             string suspectTxt = suspect == null ? $"aucun à {SuspectRange:0} m" : $"{NameOf(suspect.Uid)} (uid {suspect.Uid}) à {V3.Distance(suspect.Pos, vPos):0} m{(withAmmo != null ? ", cette munition dans son chargement" : ", sans cette munition dans son chargement")}";
             Line(LineHit, $"impact sur l'hélico {NameOf(vUid)} (uid {vUid}, camp {vSide}) : munition {AmmoName(c.Ammo)} ({c.Ammo}), dégâts {c.Dmg:0.##}" +
                 $" ; statistique : {statTxt} ; vecteur de tir : {armorTxt} ; suspect : {suspectTxt}" +
                 (shooter != null ? $" ; tireur retenu {NameOf(shooter.Uid)} (uid {shooter.Uid}, {source}, {dist:0} m)" : " ; aucun tireur retenu") +
                 (c.Thread != _mainThread ? " ; hors fil principal" : ""));
+        }
+
+        /// Lethality measurement of anti-air missiles, main thread. Only the rows AntiHeliPortee's live check calls anti-air (infrared
+        /// MANPADS-class missiles and dedicated air-defence rows): guns are left out on purpose, they are not what the rule changed.
+        /// Nothing is altered here, this only reads what the game just did so the log can answer "how many missiles to bring it down".
+        static void NoteLetal(int ammo, float dmg, UnitInfo victim)
+        {
+            try
+            {
+                if (!(dmg > 0f) || victim == null || victim.UnitId <= 0) return;
+                if (!AntiHeliPortee.MunitionAntiAerienne(ammo)) return;
+                long key = ((long)ammo << 32) | (uint)victim.UnitId;
+                if (!_letal.TryGetValue(key, out var l))
+                {
+                    if (_letal.Count >= 200) return;
+                    _letal[key] = l = new Letal { Ammo = AmmoName(ammo) + " (" + ammo + ")", Unit = NameOf(victim.Uid), Health = HealthOf(victim.UnitId) };
+                }
+                l.Hits++;
+                l.Dmg += dmg;
+            }
+            catch { }
+        }
+
+        /// Full health of a unit type, from the default armour row of the live database (0 = unreadable). Cached, main thread.
+        static float HealthOf(int unitId)
+        {
+            if (_healthByUnitId.TryGetValue(unitId, out float h)) return h;
+            h = 0f;
+            try
+            {
+                var src = DataBaseService._instance?.RawAccess;
+                if (src != null && src.Units.TryGetById(unitId, out var row) && row != null)
+                {
+                    var armor = row.Armor;
+                    if (armor != null) h = armor.MaxHealthPoints;
+                }
+            }
+            catch { h = 0f; }
+            _healthByUnitId[unitId] = h;
+            return h;
         }
 
         /// Classifies a CollectStatistic id against the victim's side (unit UID, owner player UID or EntityId; several may match).
@@ -934,16 +1012,25 @@ namespace RealismOverhaul
                 if (_fowBroken || now - _battleStart < FogStart) return;
                 _fowState = 1;
                 ResetFogCounters();
-                _fowHarmony ??= new HarmonyLib.Harmony("RealismOverhaul.AntiHeliTouches.Brouillard");
                 _fowOff = false;
+                // installed ONCE for the whole session: a detour is never removed, it is only muted (_fowOff). A later battle
+                // reopens the same two postfixes instead of patching again.
+                if (_fowPatched)
+                {
+                    _fowUntil = now + FogLength;
+                    Log($"brouillard : {_fowCount}/2 point(s) d'observation rouvert(s) pour {FogLength:0} s");
+                    return;
+                }
+                _fowHarmony ??= new HarmonyLib.Harmony("RealismOverhaul.AntiHeliTouches.Brouillard");
                 int ok = Patch(_fowHarmony, "brouillard : portée de vue vers une cible", AccessTools.Method(typeof(FowUnit), "CalculateVisionRangeForTarget"), nameof(VisionPostfix))
                        + Patch(_fowHarmony, "brouillard : distance de vue maximale", AccessTools.Method(typeof(FowUnit), "GetMaxOpticsCheckDistance"), nameof(OpticsPostfix));
                 if (ok == 0)
                 {
-                    _fowOff = true; _fowState = 2;
+                    _fowOff = true; _fowState = 2; _fowBroken = true;
                     Log("brouillard : aucun point d'observation installable, pas d'échantillon");
                     return;
                 }
+                _fowPatched = true; _fowCount = ok;
                 _fowUntil = now + FogLength;
                 Log($"brouillard : {ok}/2 point(s) d'observation installé(s) pour {FogLength:0} s");
             }
@@ -953,14 +1040,11 @@ namespace RealismOverhaul
         static void CloseFog(string why)
         {
             if (_fowState != 1) return;
+            // ABSOLUTE RULE: a live engine method is NEVER unpatched. _fowOff is the volatile disarm and both postfixes return on
+            // it at their first line, so the two detours become pass-throughs for the rest of the session. Freeing the trampoline
+            // while a worker thread is inside it (VisionPostfix counts those calls) would take the game down with no log line.
             _fowOff = true;
             _fowState = 2;
-            try { _fowHarmony?.UnpatchSelf(); }
-            catch (Exception e)
-            {
-                _fowBroken = true;                                               // postfixes stay installed but return at once
-                Log($"brouillard : retrait des points d'observation impossible ({e.GetBaseException().Message}), ils restent muets jusqu'à la fermeture du jeu");
-            }
             try { ReportFog(why); } catch (Exception e) { Log("brouillard : bilan illisible (" + e.Message + ")"); }
         }
 
@@ -1014,6 +1098,9 @@ namespace RealismOverhaul
         // ---------------------------------------------------------------- report (every 30 s, main thread)
         static string Pct(long a, long n) => n == 0 ? "-" : $"{a}/{n}";
 
+        /// True while a cheat that changes the damage figure is armed (never throws; false when it cannot be read).
+        static bool CheatSkew() { try { return Cheats.ToughArmed && Resistance.Usable; } catch { return false; } }
+
         static void Report(bool final)
         {
             long heliHitsDepth = Interlocked.Read(ref _dmgHeli), statCalls = Interlocked.Read(ref _statCalls), statHeli = Interlocked.Read(ref _statHeli);
@@ -1024,6 +1111,17 @@ namespace RealismOverhaul
             sb.Append($" ; calculs de dégâts pendant un impact {Interlocked.Read(ref _dmgInHit)}");
             if (_ammoHits.Count > 0)
                 sb.Append(" ; munitions : " + string.Join(", ", _ammoHits.OrderByDescending(kv => kv.Value).Take(10).Select(kv => $"{AmmoName(kv.Key)} ({kv.Key}) x{kv.Value}")));
+            if (_letal.Count > 0)
+                // the "N hits to bring it down" figure is read from the damage the game computed. The "unités résistantes" cheat divides
+                // the damage taken by the local player's units by its own factor, and the two postfixes on CalculateHitDamage are not
+                // ordered, so with that cheat on the figure below is not the ammunition card: say so instead of letting it be believed.
+                sb.Append($" ; létalité des munitions anti-aériennes (mesure, rien n'est changé ici{(CheatSkew() ? ", MESURE FAUSSÉE par la triche « unités résistantes » sur tes propres unités : à vérifier triche coupée" : "")}) : " + string.Join(", ", _letal.Values.OrderByDescending(l => l.Hits).Take(8)
+                    .Select(l =>
+                    {
+                        double avg = l.Dmg / Math.Max(1, l.Hits);
+                        string part = l.Health > 0f ? $" sur {l.Health.ToString("0.#", Inv)} de vie ({(100.0 * avg / l.Health).ToString("0", Inv)} %), {Math.Ceiling(l.Health / Math.Max(0.01, avg)).ToString("0", Inv)} touche(s) pour abattre" : " (vie de la cible illisible)";
+                        return $"{l.Ammo} sur {l.Unit} x{l.Hits}, dégâts moyens {avg.ToString("0.##", Inv)}{part}";
+                    })));
             sb.Append($" ; baisses de santé vues {_hpDrops} (sans impact vu {_hpDropsNoHit}), hélicos détruits {_heliDead}, disparus de la carte {_heliGone}");
             sb.Append($" ; avions suivis {_planeHp.Count}, baisses de santé d'avion {_planeDrops} (sans impact vu {_planeDropsNoHit})");
             sb.Append($" ; leurres : impacts neutralisés sur appareil {_gatedTotal} (événements {Interlocked.Read(ref _gatedEvents)}), baisses de santé juste après un impact neutralisé {_afterGateTotal}, sans impact pendant un missile face aux leurres {_noHitWindowTotal}");
@@ -1074,6 +1172,7 @@ namespace RealismOverhaul
             _units = new Dictionary<int, UnitInfo>(); _uidByEid = new Dictionary<int, int>(); _playerSide = new Dictionary<int, int>();
             _ground = new[] { new List<UnitInfo>(), new List<UnitInfo>() };
             _heliHp.Clear(); _planeHp.Clear(); _hitsSincePoll.Clear(); _hitsTotal.Clear(); _ammoHits.Clear(); _planeHitsSincePoll.Clear(); _gatedSincePoll.Clear();
+            _letal.Clear(); _healthByUnitId.Clear();
             _checks.Clear(); _checkedShooters.Clear();
             _lastReport = null;
             _helisLogged = false; _depthWarned = false;

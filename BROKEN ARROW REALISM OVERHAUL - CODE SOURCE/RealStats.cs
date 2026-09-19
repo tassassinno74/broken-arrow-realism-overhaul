@@ -45,7 +45,7 @@ namespace RealismOverhaul
         {
             // Kept: ">=" cells whose current value was already high enough (nothing written)
             // LotLines: lines of a lot that is not applied (refused, suspended, other database), counted apart from the options switched off
-            public int Cells, Loads, Rejected, UnknownRows, NameMismatch, OptionsOff, Logged, MinFixed, Removed, Kept, LotLines;
+            public int Cells, Loads, Rejected, UnknownRows, NameMismatch, OptionsOff, Logged, MinFixed, MinLogged, Removed, Kept, LotLines;
             public readonly Dictionary<string, int> Options = new(StringComparer.OrdinalIgnoreCase);
             public readonly HashSet<int> Ammo = new();
         }
@@ -408,6 +408,14 @@ namespace RealismOverhaul
                         if (FixMinimalRange(row, scale, minInCsv || minDone.Contains(rid)))
                         {
                             c.MinFixed++;
+                            // said by name, never only counted: this rule can halve a minimum range the data really states
+                            // (a mortar whose minimum is close to its own maximum), and that changes where the gun may stand
+                            if (c.MinLogged++ < 40)
+                            {
+                                var pn = Props.Get(row.GetType(), "Name");
+                                string mnm = pn == null ? "?" : Props.Csv(SafeGet(pn, row));
+                                Mod.Log.Msg($"[VRAIES STATS] portée minimale ajustée : {file} Id {rid} ({mnm}) {Props.Csv(was)} -> {Props.Csv(SafeGet(pm, row))} m (elle était trop proche de la portée de l'arme)");
+                            }
                             Note(row, pm, was, lot);
                             if (lot != null) fail ??= $"{file} : portée minimale de la munition {rid} ajustée (trop proche de sa portée)";
                         }

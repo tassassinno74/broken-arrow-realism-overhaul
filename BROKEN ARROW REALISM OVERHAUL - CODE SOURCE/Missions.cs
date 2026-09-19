@@ -1,6 +1,10 @@
-// RealismOverhaul - Missions (v0.23.0): mission script safety for every campaign mission (US and RU), solo only, both sides alike.
+// RealismOverhaul - Missions (v1.0): mission script safety for every campaign mission (US and RU), solo only, both sides alike.
+//  v1.0 : le canal d'altitude du script (UnitGroupAndNameSystem.ChangeAltitudeCommand, employé 21 fois rien que dans Blackout) est
+//     écouté lui aussi, en lecture seule. Les unités visées sont protégées comme n'importe quelle unité commandée par le script, et
+//     l'intention du script (hélicos en haut ou en bas) est transmise au module de vol bas (Esquive), qui lui laisse toujours la main.
+//     ScriptRouteFar rend la distance restante du trajet du script d'une unité, pour ne jamais déranger une arrivée, une dépose ou une évacuation.
 //  1. Script units: remembers which units the mission script drives. Sources: log-only hooks on the script command systems
-//     (complex move, simple move, unload, attack, capture), the engine's own list of active complex moves
+//     (complex move, simple move, unload, attack, capture, altitude), the engine's own list of active complex moves
 //     (MoveComplexSystem._activeWays), units spawned by script nodes (Spawns' landing hook calls NoteSpawn) and group names used by
 //     order nodes of the mission graph. EnemyAi asks ScriptReason(uid) and never orders, garrisons, counter-attacks with or cancels
 //     these units. When in doubt a unit is protected (long windows, whole battle for groups named by order nodes; cached group
@@ -54,6 +58,7 @@ using UnloadCmd = Il2CppBrokenArrow.Shared.Ecs.MissionEditor.UnloadCommandData;
 using AttackCmd = Il2CppBrokenArrow.Shared.Ecs.MissionEditor.AttackUnitData;
 using CaptureCmd = Il2CppBrokenArrow.Shared.Ecs.MissionEditor.CaptureZoneData;
 using RadiusData = Il2CppBrokenArrow.Shared.Ecs.MissionEditor.AggressiveRadiusData;
+using AltitudeCmd = Il2CppBrokenArrow.ScriptEngine.Data.AltitudeChangeData;
 using NodeSetMoney = Il2CppBrokenArrow.ScriptEngine.Nodes.Economy.NodeSetMoney;
 using NodeChangeDeck = Il2CppBrokenArrow.ScriptEngine.Nodes.Decks.NodeChangePlayerDeck;
 using ObjZoneType = Il2CppBrokenArrow.MissionEditor.Data.ObjectiveZone.ObjectiveZoneType;
@@ -67,7 +72,7 @@ namespace RealismOverhaul
 {
     static class Missions
     {
-        const string GuardVersion = "0.24.0";
+        const string GuardVersion = "1.1";
         const float Step = 0.5f, ScanEvery = 5f, WayEvery = 10f, AreaEvery = 10f, PollEvery = 5f, ReportEvery = 60f;
         const float CmdProtect = 900f, SpawnProtect = 600f, WayAfter = 900f;                 // protection windows (game seconds)
         const float StuckDist = 50f, StuckFirst = 180f, StuckAgain = 300f, NearDest = 200f, QuietFor = 90f, ContactDist = 300f;
@@ -76,11 +81,11 @@ namespace RealismOverhaul
         const int EconLogMax = 20, WayLogMax = 120, AssignLogMax = 20;                       // per-battle line caps (the relevé keeps the counts)
         const float CitedRecheckEvery = 60f;
         const long MaxDumpChars = 30_000_000;
-        const int KComplex = 0, KSimple = 1, KUnload = 2, KAttack = 3, KCapture = 4, KSetMoney = 5, KDeck = 6;
-        static readonly string[] KindNames = { "déplacement complexe", "déplacement simple", "débarquement", "attaque", "capture de zone", "argent fixé", "deck changé" };
+        const int KComplex = 0, KSimple = 1, KUnload = 2, KAttack = 3, KCapture = 4, KSetMoney = 5, KDeck = 6, KAltitude = 7;
+        static readonly string[] KindNames = { "déplacement complexe", "déplacement simple", "débarquement", "attaque", "capture de zone", "argent fixé", "deck changé", "altitude changée" };
 
         /// Primitives copied inside a hook; processed later on the main thread.
-        internal sealed class Cmd { public int Kind, Uid, Tag, Radius = -1, Amount, Player = -1; public int[] Uids; public string Group, AtDest; public V3 Vec; }
+        internal sealed class Cmd { public int Kind, Uid, Tag, Radius = -1, Amount, Player = -1, Filter = -1; public bool HeliHaut, Bascule, AltLu; public int[] Uids; public string Group, AtDest; public V3 Vec; }
 
         /// Places where Demolition must never collapse a building (built on the main thread, replaced as a whole).
         internal sealed class Areas
@@ -112,6 +117,7 @@ namespace RealismOverhaul
         static HarmonyLib.Harmony _harmony;
         static bool _patched, _refused, _sessionArmed, _everOnline, _netLogged;
         static int _orderHooks;                                         // order hooks installed (game run); EnemyAi waits for all OrderHookCount
+        static bool _altHook;                                           // canal d'altitude du script écouté (Esquive n'agit pas sans lui)
         static bool _notified;                                          // one on-screen notice per game run when EnemyAi must pause for lack of hooks
         static volatile bool _armed;
         static volatile int _mainThread, _own;
@@ -126,17 +132,18 @@ namespace RealismOverhaul
         static readonly List<UnitInfo> _aiUnits = new();
         static readonly Dictionary<int, float> _cmdUid = new(), _spawnUid = new(), _wayEnd = new(), _memberCmdAt = new();
         static readonly Dictionary<int, int> _uidRadius = new();
-        static readonly HashSet<int> _wayUid = new(), _memberCited = new();
+        static readonly HashSet<int> _wayUid = new(), _memberCited = new(), _memberWatched = new();
         static readonly Dictionary<string, float> _groupCmd = new(StringComparer.Ordinal);
         static readonly Dictionary<string, int> _groupRadius = new(StringComparer.Ordinal);
         static readonly HashSet<string> _groupDirty = new(StringComparer.Ordinal), _groupsCited = new(StringComparer.Ordinal);
+        static readonly HashSet<string> _groupsWatched = new(StringComparer.Ordinal);   // groups a death detector, a counter or a trigger waits for
         static readonly Dictionary<int, Dictionary<string, bool>> _memb = new();
         static readonly HashSet<int> _tagsCited = new();
         static readonly List<(V3 pos, int order)> _buildingDest = new();
         static readonly Dictionary<IntPtr, WayTrack> _ways = new();
         static readonly Dictionary<int, (int status, string name, int type)> _tasks = new();
         static readonly HashSet<string> _once = new();
-        static readonly int[] _cmdByKind = new int[7];
+        static readonly int[] _cmdByKind = new int[8];
         internal static volatile Areas Protection;                  // null = not built yet in this battle
         static LuaMap _map;
         static bool _groupBroken, _relaunchBroken, _tasksLogged, _areasLogged;
@@ -153,8 +160,9 @@ namespace RealismOverhaul
         // frozen simulation detection for the stall timers (Ways pass): Time.time keeps running while the game is paused or frozen
         static double _waySig; static int _wayCount = -1; static float _wayLastT = -1f, _wayUncounted;
 
-        // script dump (incremental, main thread): a step stops after 1 ms, and a step runs in every frame until the script is read
-        const double DumpBudgetMs = 1.0;
+        // script dump (incremental, main thread): a step stops after a quarter of a millisecond, and a step runs in the frames Planif
+        // gives it until the script is read (a whole millisecond per frame was ten times the mod's own budget for a frame)
+        const double DumpBudgetMs = 0.25;
         const int DumpNodeCap = 300, DumpLineCap = 3000;
         static readonly System.Diagnostics.Stopwatch _dumpSw = new();
         static readonly HashSet<string> _dumpedThisRun = new(StringComparer.OrdinalIgnoreCase);
@@ -248,7 +256,7 @@ namespace RealismOverhaul
             Interlocked.Exchange(ref _qCount, 0);
             _moveSys = null; Protection = null; _map = null;
             _units.Clear(); _byEntity.Clear(); _aiUnits.Clear(); _cmdUid.Clear(); _spawnUid.Clear(); _wayEnd.Clear(); _memberCmdAt.Clear();
-            _uidRadius.Clear(); _wayUid.Clear(); _memberCited.Clear(); _groupCmd.Clear(); _groupRadius.Clear(); _groupDirty.Clear(); _groupsCited.Clear();
+            _uidRadius.Clear(); _wayUid.Clear(); _memberCited.Clear(); _memberWatched.Clear(); _groupCmd.Clear(); _groupRadius.Clear(); _groupDirty.Clear(); _groupsCited.Clear(); _groupsWatched.Clear();
             _memb.Clear(); _tagsCited.Clear(); _buildingDest.Clear(); _ways.Clear(); _tasks.Clear(); _once.Clear();
             Array.Clear(_cmdByKind, 0, _cmdByKind.Length);
             _groupBroken = _relaunchBroken = _tasksLogged = _areasLogged = _unitsRead = false;
@@ -283,17 +291,39 @@ namespace RealismOverhaul
             return null;
         }
 
+        /// True when this unit belongs to a group the mission script WATCHES: a death detector, a unit counter or a trigger waits
+        /// for it. Those units are never commanded by the script, so ScriptReason says nothing about them, yet the mission may be
+        /// waiting to see them die. Entrenchment uses it to keep them killable. Main thread, one hash lookup, no window.
+        internal static bool WatchedMember(int uid) => _memberWatched.Contains(uid);
+
         /// Null when ScriptReason can be trusted for EnemyAi orders; otherwise why not (EnemyAi then gives no order: fail closed). Main thread.
         internal static string ProtectionNotReady()
         {
             if (!_sessionArmed) return "suivi de la mission pas démarré";
             if (_refused) return "crochets des ordres du script refusés";
             if (!_armed || _orderHooks < OrderHookCount) return "crochets des ordres du script désarmés ou incomplets";
+            if (Interlocked.Read(ref _hookDropped) > 0) return "des ordres du script ont été perdus (file pleine)";   // un ordre perdu = une protection en moins : on se tait
             if (_cmdByKind[KComplex] > 0 && _moveSys == null) return "système des trajets du script inconnu";
             if (!_scriptParsed) return _dumpStage >= 30 ? "script de la mission illisible" : "script de la mission pas encore lu";   // stage 30+ (or 99 after an error): reading is over
             if (_groupBroken) return "appartenance aux groupes illisible";
             if (!_groupsRead) return "groupes du script pas encore lus";
             return null;
+        }
+
+        /// Vrai quand le canal d'altitude du script est vraiment écouté : sans lui le vol bas des hélicos ne donne aucun ordre (fail closed).
+        internal static bool AltitudeHookReady => _altHook && _armed && !_refused;
+
+        /// Distance restante (m) du trajet du script que suit cette unité, ou faux quand elle n'en suit aucun. Fil principal.
+        internal static bool ScriptRouteFar(int uid, out float distToDest)
+        {
+            distToDest = float.MaxValue;
+            if (!_wayUid.Contains(uid)) return false;
+            foreach (var wt in _ways.Values)
+            {
+                if (wt.Target == V3.zero || wt.Alive <= 0 || !wt.Uids.Contains(uid)) continue;
+                if (wt.Dist < distToDest) distToDest = wt.Dist;
+            }
+            return distToDest < float.MaxValue;
         }
 
         /// Aggressive radius carried by the last script order seen for this unit: 1 = yes, 0 = no, -1 = unknown.
@@ -347,10 +377,14 @@ namespace RealismOverhaul
             Tick();
         }
 
-        /// Mission script reading, on the frames without a tick (main thread, same conditions as the tick).
+        static int _waitDump;
+
+        /// Mission script reading, on the frames without a tick (main thread, same conditions as the tick). Like every other heavy job
+        /// it asks Planif for the frame's slot first, so it never piles up on the frame another module is already working in.
         static void DumpFrame()
         {
             if (_dumpStage >= 99 || !_sessionArmed) return;
+            if (!Planif.Take(ref _waitDump, Planif.WaitArm)) return;
             var gc = GameController._instance;
             if (gc?._GameSession_k__BackingField?.CurrentPlayer == null) return;
             _dumpGc = gc;
@@ -424,10 +458,14 @@ namespace RealismOverhaul
                 orders += PatchOne(typeof(GroupNameSys), nameof(GroupNameSys.RunAttackEnemy), nameof(PreAttack), null, ref want);
                 orders += PatchOne(typeof(GroupNameSys), nameof(GroupNameSys.RunCapture), nameof(PreCapture), null, ref want);
                 _orderHooks = orders; n += orders;
+                // canal d'altitude du script (Blackout l'emploie 21 fois) : lu seulement, et le vol bas des hélicos reste en mesure sans lui
+                _altHook = PatchOne(typeof(GroupNameSys), nameof(GroupNameSys.ChangeAltitudeCommand), nameof(PreChangeAltitude), null, ref want) == 1;
+                if (_altHook) n++;
                 n += PatchOne(typeof(NodeSetMoney), nameof(NodeSetMoney.OnActivated), null, nameof(PostSetMoney), ref want);
                 n += PatchOne(typeof(NodeChangeDeck), nameof(NodeChangeDeck.OnActivated), null, nameof(PostDeck), ref want);
                 _patched = true;
-                Log($"crochets d'observation installés ({n}/{want}) : ordres du script, argent et deck fixés par le script ; rien n'est modifié");
+                Log($"crochets d'observation installés ({n}/{want}) : ordres du script, altitude commandée par le script, argent et deck fixés par le script ; rien n'est modifié");
+                if (!_altHook) Log("ordres d'altitude du script non écoutés : le vol bas des hélicos de l'IA reste en mesure seule");
                 if (orders < OrderHookCount)
                 {
                     Mod.Log.Warning($"[MISSION] crochets des ordres du script incomplets ({orders}/{OrderHookCount}) : l'IA ennemie du mod reste en pause pendant cette session de jeu");
@@ -545,6 +583,28 @@ namespace RealismOverhaul
             catch { HookFail(); }
         }
 
+        /// Le script commande l'altitude d'avions ou d'hélicos : on note seulement son intention (jamais modifiée), pour que le vol bas
+        /// des hélicos de l'IA lui laisse toujours la main et sache à quelle altitude remettre l'unité ensuite.
+        static void PreChangeAltitude(AltitudeCmd data)
+        {
+            if (data == null || !HookEnter()) return;
+            try
+            {
+                var c = new Cmd { Kind = KAltitude };
+                try { c.Uids = ReadIds(data.UnitsUIDs); } catch { }
+                try { c.Uid = data.UnitTargetUID; c.Group = data.Group; } catch { }
+                // les trois lectures qui disent l'INTENTION du script sont séparées : si une seule manque, l'intention est déclarée
+                // illisible (AltLu faux) et le vol bas lâche l'hélico au lieu de deviner une altitude à l'envers
+                bool lu = true;
+                try { c.Filter = Convert.ToInt32(data.Filter); } catch { lu = false; }
+                try { c.Bascule = data.SwitchMode; } catch { lu = false; }
+                try { c.HeliHaut = data.HelicoptersToHigh; } catch { lu = false; }
+                c.AltLu = lu;
+                Push(c);
+            }
+            catch { HookFail(); }
+        }
+
         static void PreUnload(UnloadCmd data)
         {
             if (data == null || !HookEnter()) return;
@@ -649,6 +709,8 @@ namespace RealismOverhaul
             }
         }
 
+        static readonly List<int> _altMembres = new();               // membres de groupe d'un ordre d'altitude du script (réutilisée, fil principal)
+
         static void NoteCommand(Cmd c, float now)
         {
             _cmdSeen++; _lastCmdT = now;
@@ -666,6 +728,15 @@ namespace RealismOverhaul
                 GroupNow(g, now);
             }
             if (targets == 0) _cmdNoTarget++;
+            if (c.Kind == KAltitude)
+            {
+                // les unités visées sont marquées comme n'importe quelle unité commandée par le script ; l'intention d'altitude part au vol bas
+                _altMembres.Clear();
+                foreach (var g in SplitGroups(c.Group))
+                    foreach (var kv in _memb)
+                        if (_altMembres.Count < 200 && kv.Value.TryGetValue(g, out bool member) && member) _altMembres.Add(kv.Key);
+                try { Esquive.NoteScriptAltitude(c.Uids, c.Uid, _altMembres, c.HeliHaut, c.Bascule, c.Filter, c.AltLu); } catch { }
+            }
             V3 dest = c.Vec;
             string where = "";
             if (c.Kind != KAttack && c.Kind != KCapture)
@@ -777,8 +848,9 @@ namespace RealismOverhaul
             if (_groupBroken) { _groupsRead = false; return; }
             var active = new List<string>();
             foreach (var g in _groupsCited) active.Add(g);
-            foreach (var kv in _groupCmd) if (now - kv.Value < CmdProtect && !_groupsCited.Contains(kv.Key)) active.Add(kv.Key);
-            if (active.Count == 0 && _memberCmdAt.Count == 0 && _memberCited.Count == 0) { _groupsRead = _scriptParsed; return; }
+            foreach (var g in _groupsWatched) if (!_groupsCited.Contains(g)) active.Add(g);
+            foreach (var kv in _groupCmd) if (now - kv.Value < CmdProtect && !_groupsCited.Contains(kv.Key) && !_groupsWatched.Contains(kv.Key)) active.Add(kv.Key);
+            if (active.Count == 0 && _memberCmdAt.Count == 0 && _memberCited.Count == 0 && _memberWatched.Count == 0) { _groupsRead = _scriptParsed; return; }
             if (_groupDirty.Count > 0)
             {
                 // only "not a member" answers are forgotten: a unit cached as member stays protected while it is re-read
@@ -840,13 +912,14 @@ namespace RealismOverhaul
                 _recheckCursor = resumeAt;                                                   // -1 = full re-read pass finished
             }
             _groupsRead = _scriptParsed && complete;
-            _memberCmdAt.Clear(); _memberCited.Clear();
+            _memberCmdAt.Clear(); _memberCited.Clear(); _memberWatched.Clear();
             foreach (var kv in _memb)
                 foreach (var gk in kv.Value)
                 {
                     if (!gk.Value) continue;
                     if (_groupCmd.TryGetValue(gk.Key, out float t) && (!_memberCmdAt.TryGetValue(kv.Key, out float old) || t > old)) _memberCmdAt[kv.Key] = t;
                     if (_groupsCited.Contains(gk.Key)) _memberCited.Add(kv.Key);
+                    if (_groupsWatched.Contains(gk.Key)) _memberWatched.Add(kv.Key);
                 }
         }
 
@@ -1304,6 +1377,17 @@ namespace RealismOverhaul
             return false;
         }
         static readonly string[] OrderWords = { "move", "unload", "attack", "capture", "waypoint", "airstrike", "airdrop", "patrol", "enter", "embark", "retreat", "garrison", "holdfire", "firemission", "laser", "altitude", "aggressive", "refund", "command", "order", "follow", "defend", "escort" };
+
+        /// Watch nodes: they give no order, they WAIT for the units of a group (their death, their number, their entering a trigger).
+        /// A mission can be waiting to see such a squad die, so the entrenchment must keep it killable.
+        static bool IsWatchNode(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            string n = NodeKey(name);
+            return n.Contains("dead") || n.Contains("count") || n.Contains("trigger") || n.Contains("visible") || n.Contains("destroyed") || n.Contains("killed");
+        }
+        static readonly string[] WatchGroupKeys = { "grf", "gr", "fg", "fg2", "tg", "ug" };   // the short group fields of the watch nodes
+        static bool IsWatchGroupKey(string k) => k.Contains("group") || Array.IndexOf(WatchGroupKeys, k) >= 0;
         static bool IsBuildingNode(string name)
         {
             if (string.IsNullOrEmpty(name)) return false;
@@ -1319,6 +1403,8 @@ namespace RealismOverhaul
             string k = key.ToLowerInvariant();
             if (k.Contains("group") && IsOrderNode(nodeName) && value[0] != '{' && value[0] != '[')
                 foreach (var g in SplitGroups(value)) if (_groupsCited.Count < 500) _groupsCited.Add(g);
+            else if (IsWatchGroupKey(k) && IsWatchNode(nodeName) && value[0] != '{' && value[0] != '[')
+                foreach (var w in SplitGroups(value)) if (_groupsWatched.Count < 200) _groupsWatched.Add(w);
             if (k.Contains("tag") && IsBuildingNode(nodeName))
             {
                 var m = FirstNumber.Match(value);
@@ -1556,8 +1642,9 @@ namespace RealismOverhaul
             catch (Exception e) { sb.Append("(illisible : ").Append(e.Message).Append(")\n"); }
             sb.Append("\n== LU PAR LE MOD\n");
             sb.Append("groupes cités par des ordres du script (protégés de l'IA ennemie du mod) : ").Append(string.Join(", ", _groupsCited)).Append('\n');
+            sb.Append("groupes attendus par le script (mort, comptage, déclencheur : ils ne dépassent jamais le poste de combat) : ").Append(string.Join(", ", _groupsWatched)).Append('\n');
             sb.Append("tags cités par des nœuds de bâtiment (protégés des démolitions) : ").Append(string.Join(", ", _tagsCited)).Append('\n');
-            Log($"script lu ({_dumpSource}) : {_dumpNodes} nœuds, {_dumpLines} liens, groupes cités par des ordres {_groupsCited.Count}, tags de bâtiment cités {_tagsCited.Count}");
+            Log($"script lu ({_dumpSource}) : {_dumpNodes} nœuds, {_dumpLines} liens, groupes cités par des ordres {_groupsCited.Count}, groupes attendus {_groupsWatched.Count}, tags de bâtiment cités {_tagsCited.Count}");
         }
 
         static void DumpWrite()
@@ -1624,7 +1711,7 @@ namespace RealismOverhaul
             string notReady = final ? null : ProtectionNotReady();
             string aiGate = final ? "" : notReady != null ? $" ; IA ennemie du mod en pause ({notReady})" : " ; IA ennemie du mod : unités du script identifiées, ordres permis";
             Log($"{(final ? "bilan" : "relevé")} t={now - _start:0}s mission={Campaign.MissionUid} : objectifs visibles {visible} (joueur {mine}, ennemi {theirs}, autres {other}) ; tâches actives {active}, réussies {won}, échouées {failed}, dernier changement {Ago(now, _lastTaskT)} ; ennemis vivants {enemies} ; unités du script protégées {prot} (trajet {pWay}, ordre {pCmd}, apparition {pSpawn}, groupe commandé {pGroupCmd}, groupe cité {pCited}) ; trajets du script actifs {_waysNow} (bloqués {_stuckNow}, temps figé ou non suivi ignoré {_wayUncounted:0} s) ; relances {_relaunches} (dernière : {_lastRelaunch}){(_stageBattle == 1 ? $", convois repartis {_relaunchMoved}/{_relaunchEffects} mesurés" : $", mesure : relances possibles {_wouldCount}, bloqués prouvés {_provenStalls}, reprises seules {_selfResumed}")}{(_wayLogs > WayLogMax ? $" ; lignes de trajets non écrites {_wayLogs - WayLogMax}" : "")}{(_econLogs > EconLogMax ? $" ; lignes argent/deck non écrites {_econLogs - EconLogMax}" : "")} ; ordres du script vus {_cmdSeen} (dernier {Ago(now, _lastCmdT)}, sans cible lisible {_cmdNoTarget}) ; apparitions du script {_spawnNotes} (dernière {Ago(now, _lastSpawnT)}) ; argent {money} (chutes brutales {_moneyResets}, argent fixé par le script {_scriptMoneySets}, decks changés {_scriptDeckChanges})");
-            Log($"{(final ? "bilan" : "relevé")} crochets : {(_patched ? (_armed ? "armés" : "désarmés") : _refused ? "refusés" : "pas installés")}, appels {Interlocked.Read(ref _hookCalls)} (hors fil principal {Interlocked.Read(ref _hookOffMain)}), perdus {Interlocked.Read(ref _hookDropped)}, erreurs {Interlocked.Read(ref _hookErrors)} ; système des trajets {(_moveSys != null ? "connu" : "inconnu (aucun ordre complexe vu)")} ; groupes : cités {_groupsCited.Count}, commandés {_groupCmd.Count}, unités ajoutées aux groupes cités {_citedAdded}{(_groupBroken ? ", lecture coupée" : "")}{aiGate} ; places protégées des démolitions {Protection?.X.Length.ToString(CultureInfo.InvariantCulture) ?? "pas prêtes"} ; script {(_dumpStage >= 99 ? "lu" : "en lecture")} ({_dumpNodes} nœuds)");
+            Log($"{(final ? "bilan" : "relevé")} crochets : {(_patched ? (_armed ? "armés" : "désarmés") : _refused ? "refusés" : "pas installés")}, appels {Interlocked.Read(ref _hookCalls)} (hors fil principal {Interlocked.Read(ref _hookOffMain)}), perdus {Interlocked.Read(ref _hookDropped)}, erreurs {Interlocked.Read(ref _hookErrors)} ; système des trajets {(_moveSys != null ? "connu" : "inconnu (aucun ordre complexe vu)")} ; groupes : cités {_groupsCited.Count}, commandés {_groupCmd.Count}, unités ajoutées aux groupes cités {_citedAdded}{(_groupBroken ? ", lecture coupée" : "")}{aiGate} ; places protégées des démolitions {Protection?.X.Length.ToString(CultureInfo.InvariantCulture) ?? "pas prêtes"} ; altitude commandée par le script : canal {(_altHook ? "écouté" : "non écouté")}, {_cmdByKind[KAltitude]} ordre(s) vu(s) ; script {(_dumpStage >= 99 ? "lu" : "en lecture")} ({_dumpNodes} nœuds)");
         }
 
         static string Ago(float now, float t) => t < 0 ? "jamais" : $"il y a {now - t:0} s";
