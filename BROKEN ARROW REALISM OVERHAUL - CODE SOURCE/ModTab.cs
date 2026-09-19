@@ -9,8 +9,9 @@
 //  - Clicks: the mod reads the mouse itself (press then release over the same widget; a click on a cloned native widget has
 //    never been observed in this game); vanilla callbacks (TabButton.OnSelected, Button.onClick) are a secondary path that is
 //    ignored once the mouse path has worked. A click is refused when a game popup or a game button covers the widget.
-//  - Rows: the player's own choices and the cheats. "Mission" holds two choice rows ("Heure de la mission", HeureDuJour.cs, and
-//    "Durée des épaves", Epaves.cs): a Pref row cycles through named values of a MelonPreferences entry, with its label, its value names
+//  - Rows: the player's own choices and the cheats. "Mission" holds the choice rows ("Heure de la mission", HeureDuJour.cs, "Durée des
+//    cratères", Decor.cs, and "Durée des épaves", Epaves.cs, which is built but withheld while it only measures):
+//    a Pref row cycles through named values of a MelonPreferences entry, with its label, its value names
 //    and its description in the game's language, the description coming from the module and rebuilt only when the module's state or the
 //    chosen value changed.
 //    Then "Triche" (one row per Cheats kind 0..Cheats.KindCount-1; label, description and key come from the UI-agnostic Cheats API:
@@ -58,13 +59,15 @@ namespace RealismOverhaul
     static class Patch_ModTabInit
     {
         /// Harmony calls this before patching the class, i.e. from Mod.ApplyPatches during OnInitializeMelon: the only startup-time
-        /// entry point ModTab.cs owns. The wreck-duration preference is created here so it exists long before the Options window is
-        /// built (its row needs it) and so a value saved in a previous session is read back. Never returns false and never throws:
-        /// a failure here would disable the tab's own postfix.
+        /// entry point ModTab.cs owns. The wreck-duration and crater-duration preferences are created here so they exist long before the
+        /// Options window is built (their rows need them) and so a value saved in a previous session is read back. Never returns false
+        /// and never throws: a failure here would disable the tab's own postfix, and one module failing must not take the other with it.
         static bool Prepare()
         {
             try { Epaves.CreatePrefs(); }
             catch (Exception e) { try { Mod.Log.Warning("[EPAVES] réglage non créé : " + e.GetBaseException().Message); } catch { } }
+            try { Decor.CreatePrefs(); }
+            catch (Exception e) { try { Mod.Log.Warning("[DECOR] réglage non créé : " + e.GetBaseException().Message); } catch { } }
             return true;
         }
 
@@ -167,14 +170,20 @@ namespace RealismOverhaul
         // cached delegates: no allocation per frame
         static readonly Action _aWatch = Watch, _aDetect = Detect, _aBuild = TryBuild, _aMouse = PollMouse, _aLeave = CheckLeave,
                                _aRefresh = RefreshAll, _aFix = FixVanillaHighlight, _aStatic = TrackStatic, _aCleanup = Cleanup;
+        // the two choice modules that run from this frame: cached so Perf.Run costs no allocation per frame
+        static readonly Action _aEpaves = Epaves.Tick, _aDecor = Decor.Tick;
 
         // ============================================================ entry point (Mod.OnUpdate, before the Actif check)
         internal static void Frame()
         {
             if (Mod.AntiCheatActive || Identite.Blocked) return;
-            // the wreck duration is a player's choice, not a piece of the tab: it keeps working (and keeps giving the game its own value
-            // back) even after 20 errors have switched the tab itself off. It throttles itself to one pass every 2 s and never throws.
-            Epaves.Tick();
+            // the wreck duration and the crater duration are the player's choices, not pieces of the tab: they keep working (and keep
+            // giving the game its own values back) even after 20 errors have switched the tab itself off. Each throttles itself to one
+            // pass every 2 s and neither ever throws.
+            // Timed like every other module: they were the only two mod calls of a frame that never reached the [PERF] line, so a
+            // regression in one of them was invisible in the very line the author reads to decide whether the mod costs anything.
+            Perf.Run("Epaves", _aEpaves);
+            Perf.Run("Decor", _aDecor);
             if (_disabled) return;
             try { FrameBody(); }
             catch (Exception e) { Fail("ModTab.Image", e); }
@@ -1442,6 +1451,16 @@ namespace RealismOverhaul
             // so a row here would promise the player something that does not happen yet. Restore this single line
             // once a test session has timed a real body and a real hull and Epaves.cs writes again.
             //             Choice(Epaves.PrefCat, Epaves.PrefName, TxtKey.EP_LABEL, Epaves.Valeurs, Epaves.RowDesc, () => Epaves.EtatVersion);
+            // Crater duration (2026-09-19): this one DOES write, and writes exactly ONE value - DecalLimitGroupPreset.LifeTime, on every
+            // readable group and not only on the craters, which the row says in all five languages. No hook, journaled under its own lot.
+            // It deliberately raises NO count - neither MaxCount nor the runtime ObjectPoolGroup._maxTotalObjects - so the number of
+            // marks stays inside the budget the studio chose; what it does cost is more marks alive at once inside that budget, and the
+            // row states that cost instead of hiding it. It stops at 30 minutes, because a mark is born with the duration then in force
+            // and a duration longer than a battle would mean nothing can expire during it. The wrecks, the fire and the buildings the
+            // same request asked for do not exist as values in this build; Decor.cs says so in the log instead of shipping a figure that
+            // changes nothing. The row says "written", never "applied": that the engine reads this preset when a mark is born is a
+            // deduction from the class shapes, and one timed battle is what would settle it.
+            Choice(Decor.PrefCat, Decor.PrefName, TxtKey.DC_LABEL, Decor.Valeurs, Decor.RowDesc, () => Decor.EtatVersion);
 
             Title(TxtKey.MT_TITLE_CHEATS);
             for (int k = 0; k < Cheats.KindCount; k++) Cheat(k);

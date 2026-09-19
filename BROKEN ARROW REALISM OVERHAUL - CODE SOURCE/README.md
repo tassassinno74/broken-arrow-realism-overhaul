@@ -64,7 +64,7 @@ released archive. The build is deterministic (`Deterministic`, `PathMap`, no PDB
 DLL is reproduced byte for byte:
 
 ```
-version 1.1    BrokenArrowRealismOverhaul.dll   2 141 696 bytes   MD5 a227dcbe53ee5aee39143eab2b2bca0f
+version 1.1    BrokenArrowRealismOverhaul.dll   2 181 632 bytes   MD5 0e5d5110f76ed3e9d716f8718cdc8e38
 ```
 
 ## Install (for players)

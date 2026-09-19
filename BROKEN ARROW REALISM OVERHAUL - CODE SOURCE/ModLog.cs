@@ -71,6 +71,7 @@ namespace RealismOverhaul
         {
             "v" + Identite.Version + " ",                 // version line
             "[PATCH]", "[SECURITE]", "[INSTALLATION]", "[REGLAGES]", "[DLC]",
+            "[DECOR]", "[EPAVES]", "[CARGO]",             // measurements the author needs back from a shared build to set these values
             "[CAMPAGNE]",                                  // mission start and end, decks used, mission played without the mod (US_M01)
             "Injection des divisions CAMPAGNE", "  CAMPAGNE ", "Deck '", "Decks CAMPAGNE ",
             "[ECRAN]",                                     // on-screen notices (always logged in French)

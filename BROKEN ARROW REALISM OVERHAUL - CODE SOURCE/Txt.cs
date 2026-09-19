@@ -71,6 +71,13 @@ namespace RealismOverhaul
         EP_LABEL, EP_DESC,
         EP_V_VANILLE, EP_V_5, EP_V_15, EP_V_30, EP_V_60, EP_V_ALWAYS,
         EP_ST_OFF, EP_ST_NEXT, EP_ST_DONE, EP_ST_ALREADY, EP_ST_NOGAME, EP_ST_SAFETY,
+        // durée des cratères et des traces d'impact (ligne à choix de l'onglet Mod)
+        DC_LABEL, DC_DESC,
+        // "60 minutes" and "toute la bataille" were withdrawn on 2026-09-19: a mark is born with the duration then in force and keeps
+        // it, so a duration longer than a battle means nothing can expire during it. They come back when a timed battle has measured
+        // what the game does at its own ceiling.
+        DC_V_VANILLE, DC_V_5, DC_V_15, DC_V_30,
+        DC_ST_OFF, DC_ST_NEXT, DC_ST_DONE, DC_ST_ALREADY, DC_ST_NOGAME, DC_ST_PLEIN, DC_ST_RESEAU, DC_ST_SAFETY,
         // météo de la mission (ligne à choix de l'onglet Mod)
         ME_LABEL, ME_DESC,
         ME_V_AUTO, ME_V_MESURE, ME_V_OFF,
@@ -835,6 +842,72 @@ namespace RealismOverhaul
                 "Status: Diese Spielversion erlaubt keine Änderung der Dauer, nichts wird geändert.",
                 "状态：该游戏版本无法更改时长，未作任何改动。"),
             (TxtKey.EP_ST_SAFETY, "État : coupé par sécurité (le reste du mod fonctionne).", "State: switched off for safety (the rest of the mod still works).",
+                "Состояние: отключено для безопасности (остальной мод работает).", "Status: aus Sicherheitsgründen abgeschaltet (der Rest der Mod funktioniert).", "状态：出于安全已关闭（模组其余部分正常）。"),
+
+            // ---- durée des traces au sol (onglet Mod). Chaque phrase ici doit pouvoir être défendue devant quelqu'un qui a lu le code du
+            // jeu, donc elle ne dit que trois choses, toutes vérifiables : le mod écrit UNE valeur, la durée (DecalLimitGroupPreset.
+            // LifeTime) ; il l'écrit sur TOUS les groupes de traces lisibles, pas seulement sur les cratères (lequel est le groupe des
+            // cratères ne se lit pas dans le jeu) ; il ne touche à aucun plafond de nombre (ni MaxCount, ni ObjectPoolGroup.
+            // _maxTotalObjects). Le coût — plus de traces vivantes en même temps, donc des images/seconde — est annoncé, pas caché.
+            // Ce que le jeu fait une fois SON plafond atteint n'est pas lisible dans cette version (les corps de Processing /
+            // LiveTimeProcessing / Spawn ne sont pas dans les dumps), donc rien ici ne le décrit : la seule phrase écrite sur ce point
+            // est que le jeu y fait ce qu'il faisait déjà sans le mod, ce qui est vrai puisque le mod ne change pas ce plafond.
+            // Le jeu n'a aucun réglage pour les épaves, le feu, la fumée ni les bâtiments en flammes : c'est dit en une ligne.
+            (TxtKey.DC_LABEL, "Durée des cratères", "Crater duration", "Время жизни воронок", "Dauer der Krater", "弹坑留存时间"),
+            (TxtKey.DC_DESC,
+                "Le jeu efface ses traces au sol après un temps à lui.\nLe mod allonge ce temps, sur toutes ses traces : cratères, impacts.\nC'est la seule valeur écrite : le nombre de traces n'est pas touché.\nPlus de traces restent en même temps : c'est le coût en images/s.\nLe jeu reste plus souvent à son maximum ; il y fait ce qu'il fait déjà.\nÉpaves, feu et fumée : inchangés. En solo seulement.",
+                "The game wipes its ground marks after a time of its own.\nThe mod lengthens that time, on all of them: craters, impacts.\nThat is the only value written: the number of marks is untouched.\nMore marks stay at once: that is the cost in frames per second.\nThe game sits at its maximum more often; there it does what it already does.\nWrecks, fire and smoke: unchanged. Solo only.",
+                "Игра сама стирает следы на земле через своё время.\nМод продлевает это время, для всех следов: воронок, попаданий.\nЭто единственное записанное значение: число следов не трогается.\nОдновременно держится больше следов: это и есть цена в кадрах.\nИгра чаще стоит у своего предела; там она делает то же, что и всегда.\nОбломки, огонь и дым: без изменений. Только одиночная игра.",
+                "Das Spiel löscht seine Bodenspuren nach einer eigenen Zeit.\nDie Mod verlängert diese Zeit, für alle Spuren: Krater, Einschläge.\nDas ist der einzige geschriebene Wert: die Anzahl bleibt unberührt.\nMehr Spuren bleiben gleichzeitig: das ist der Preis bei den Bildern/s.\nDas Spiel liegt öfter an seinem Maximum; dort tut es, was es ohnehin tut.\nWracks, Feuer und Rauch: unverändert. Nur solo.",
+                "游戏会在它自己设定的时间后抹去地面痕迹。\n模组延长这个时间，对它的所有痕迹生效：弹坑、弹着点。\n这是唯一被写入的数值：痕迹数量不受改动。\n同时留存的痕迹更多：这就是帧数上的代价。\n游戏会更常处于自身上限；到了上限，它的行为和平时一样。\n残骸、火焰与烟雾：不受影响。仅限单人。"),
+            (TxtKey.DC_V_VANILLE, "Comme le jeu", "As the game", "Как в игре", "Wie das Spiel", "与游戏一致"),
+            (TxtKey.DC_V_5, "5 minutes", "5 minutes", "5 минут", "5 Minuten", "5 分钟"),
+            (TxtKey.DC_V_15, "15 minutes", "15 minutes", "15 минут", "15 Minuten", "15 分钟"),
+            (TxtKey.DC_V_30, "30 minutes", "30 minutes", "30 минут", "30 Minuten", "30 分钟"),
+            (TxtKey.DC_ST_OFF, "État : le mod ne touche pas à la durée des traces au sol.", "State: the mod does not touch how long ground marks stay.",
+                "Состояние: мод не меняет время жизни следов на земле.", "Status: Die Mod ändert die Dauer der Bodenspuren nicht.", "状态：模组不会改变地面痕迹的留存时间。"),
+            // The row is not written from a menu where the game has not loaded its decal settings yet, so this state says exactly that
+            // and promises nothing about a battle: the value is written as soon as those settings can be read.
+            (TxtKey.DC_ST_NEXT, "État : « {0} » sera écrit dès que le jeu aura chargé ses réglages.",
+                "State: {0} will be written as soon as the game has loaded its settings.",
+                "Состояние: «{0}» будет записано, как только игра загрузит свои настройки.",
+                "Status: „{0}“ wird geschrieben, sobald das Spiel seine Werte geladen hat.",
+                "状态：一旦游戏载入其设置，{0} 就会被写入。"),
+            // "écrit", not "appliqué" : the mod writes the value on the game's own presets and reads it back, but the dumps do not show
+            // the engine reading that preset when a mark is born. Saying "written" is the whole difference, and it costs the player
+            // nothing; the log carries the reserve in full, and one timed battle is what would turn it into "applied".
+            (TxtKey.DC_ST_DONE, "État : « {0} » écrit dans les réglages de traces du jeu.",
+                "State: {0} written into the game's ground-mark settings.",
+                "Состояние: «{0}» записано в настройки следов игры.",
+                "Status: „{0}“ in die Spurwerte des Spiels geschrieben.",
+                "状态：{0} 已写入游戏的地面痕迹设置。"),
+            (TxtKey.DC_ST_ALREADY, "État : le jeu garde déjà les traces plus longtemps, rien n'est changé.",
+                "State: the game already keeps its marks longer, nothing is changed.",
+                "Состояние: игра уже держит следы дольше, ничего не изменено.",
+                "Status: Das Spiel behält seine Spuren bereits länger, nichts wird geändert.",
+                "状态：游戏保留痕迹的时间已更长，未作任何改动。"),
+            (TxtKey.DC_ST_NOGAME, "État : cette version du jeu ne permet pas de changer la durée, rien n'est changé.",
+                "State: this version of the game does not allow changing the duration, nothing is changed.",
+                "Состояние: эта версия игры не позволяет изменить время, ничего не изменено.",
+                "Status: Diese Spielversion erlaubt keine Änderung der Dauer, nichts wird geändert.",
+                "状态：该游戏版本无法更改时长，未作任何改动。"),
+            // The mod cannot erase a mark already on the ground - it is born with its own duration - so the only honest safety is to hand
+            // the game back its own duration for the rest of the battle, and to say so in those words. The state is reached only when
+            // Every readable pool has reached its ceiling at least once. The counter never falls back during a battle, so this is
+            // "has been full", not "is full now" - the strings say exactly that and nothing stronger.
+            (TxtKey.DC_ST_PLEIN, "État : plafond des réserves atteint ; durée d'origine rendue pour la bataille.",
+                "State: the reserves have reached their ceiling; the game's own duration is given back.",
+                "Состояние: запасы достигли предела; исходное время возвращено игре на этот бой.",
+                "Status: Die Reserven haben ihr Limit erreicht; die Originaldauer gilt wieder im Gefecht.",
+                "状态：储备已达上限；本场战斗交还游戏原始时长。"),
+            // A network battle is left entirely to the game, so the row must not go on saying that the value "will be written": it says
+            // what is true, that nothing is touched there. (The PUBLIC build blocks multiplayer outright; the personal one does not.)
+            (TxtKey.DC_ST_RESEAU, "État : partie en réseau, le mod ne touche pas aux traces du jeu.",
+                "State: network game, the mod does not touch the game's marks.",
+                "Состояние: сетевая игра, мод не трогает следы игры.",
+                "Status: Netzwerkpartie, die Mod rührt die Spuren des Spiels nicht an.",
+                "状态：网络对战，模组不会改动游戏的痕迹。"),
+            (TxtKey.DC_ST_SAFETY, "État : coupé par sécurité (le reste du mod fonctionne).", "State: switched off for safety (the rest of the mod still works).",
                 "Состояние: отключено для безопасности (остальной мод работает).", "Status: aus Sicherheitsgründen abgeschaltet (der Rest der Mod funktioniert).", "状态：出于安全已关闭（模组其余部分正常）。"),
 
             // ---- météo de la mission (onglet Mod). The weather is the mission's own; the mod only gives it an effect on ground sight.
